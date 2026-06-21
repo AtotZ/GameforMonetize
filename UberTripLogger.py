@@ -1508,7 +1508,7 @@ def _build_log_block(now_str, trip_label, ocr_time, parse_result, metrics, ocr_t
 
 def main():
     state = _load_state()
-    shortcut_offer_text, shortcut_input_mode = _read_shortcut_offer_input()
+    shortcut_offer_text, shortcut_input_mode, shortcut_source = _read_shortcut_offer_input()
     latest_asset = None
     selected_asset_id = None
     selected_asset_created = None
@@ -1522,7 +1522,13 @@ def main():
 
     if shortcut_offer_text:
         if shortcut_input_mode == "file":
-            print("[input] Using Shortcut-extracted text from file.")
+            print(
+                "[input] Using Shortcut-extracted text from file (%s, %s bytes)."
+                % (
+                    shortcut_source.get("tag") or "FILE",
+                    shortcut_source.get("bytes") or len(shortcut_offer_text),
+                )
+            )
         else:
             print("[input] Using Shortcut-extracted text from clipboard.")
         try:
@@ -1605,11 +1611,19 @@ def main():
             "ocr_text": ocr_text,
             "ocr_seconds": round(ocr_time, 4),
             "asset_offer_score": preselected_score,
+            "shortcut_source": shortcut_source,
         }
         _write_json(LATEST_JSON_PATH, latest_payload)
         _send_push_notification(
-            "TripLogger Parse Alert %s" % SCRIPT_BUILD_TAG,
-            "%s | %s" % (parse_reason, ocr_preview),
+            "TripLogger Parse Alert %s %s"
+            % (SCRIPT_BUILD_TAG, shortcut_source.get("tag") or "PHOTO"),
+            "SRC %s %sB | %s | %s"
+            % (
+                shortcut_source.get("tag") or "PHOTO",
+                shortcut_source.get("bytes") or 0,
+                parse_reason,
+                ocr_preview,
+            ),
         )
         raise SystemExit(0)
 
@@ -1706,6 +1720,7 @@ def main():
         "ocr_text": ocr_text,
         "input_mode": "shortcut_text" if shortcut_offer_text else "photo_asset",
         "shortcut_input_mode": shortcut_input_mode if shortcut_offer_text else "",
+        "shortcut_source": shortcut_source,
         "parse": parse_result,
         "metrics": metrics,
         "ledger_record": ledger_record,
@@ -1737,10 +1752,11 @@ def main():
             target_delta_compact = _format_signed_pounds_per_minute(
                 target_insight.get("delta_per_min_gbp") or 0.0
             ).replace("/min", "/m")
-        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | \U0001f3af %s" % (
+        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | \U0001f3af %s | %s" % (
             parsed["rating"] if parsed["rating"] else 0.0,
             parsed["price"],
             target_delta_compact,
+            shortcut_source.get("tag") or "PHOTO",
         )
         body_line1 = "Real Price \u00a3%.2f/min | \u00a3%.2f/miles" % (
             metrics["per_min_adj"],
@@ -1751,7 +1767,11 @@ def main():
             metrics["per_min_card"],
             metrics["per_mile_card"],
         )
-        body_text = "%s\n%s" % (body_line1, body_line2)
+        body_line3 = "SRC %s %sB" % (
+            shortcut_source.get("tag") or "PHOTO",
+            shortcut_source.get("bytes") or 0,
+        )
+        body_text = "%s\n%s\n%s" % (body_line1, body_line2, body_line3)
     _send_push_notification(title_line, body_text)
 
     t_global_end = time.perf_counter()
@@ -1766,6 +1786,15 @@ def _looks_like_offer_text(text):
     if len(text) < 12:
         return False
     return bool(re.search("[£$€]\\s*\\d", text))
+
+
+def _shortcut_source_tag(path):
+    normalized = os.path.normpath(path or "")
+    if normalized == os.path.normpath(SHORTCUT_INPUT_PATH):
+        return "PYDOC"
+    if normalized == os.path.normpath(SHORTCUT_INPUT_FALLBACK_PATH):
+        return "PYROOT"
+    return "FILE"
 
 
 def _consume_shortcut_offer_text_file():
@@ -1784,19 +1813,24 @@ def _consume_shortcut_offer_text_file():
                         handle.write("")
                 except Exception:
                     pass
-                return text
+                return {
+                    "text": text,
+                    "path": path,
+                    "tag": _shortcut_source_tag(path),
+                    "bytes": len(text.encode("utf-8", errors="ignore")),
+                }
         except Exception:
             pass
         if time.perf_counter() >= deadline:
-            return ""
+            return None
         time.sleep(SHORTCUT_INPUT_POLL_SECONDS)
 
 
 def _read_shortcut_offer_input():
-    file_text = _consume_shortcut_offer_text_file()
-    if file_text:
-        return file_text, "file"
-    return "", ""
+    file_payload = _consume_shortcut_offer_text_file()
+    if file_payload and file_payload.get("text"):
+        return file_payload["text"], "file", file_payload
+    return "", "", {"tag": "PHOTO", "path": "", "bytes": 0}
 
 
 if __name__ == "__main__":
