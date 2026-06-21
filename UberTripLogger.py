@@ -761,7 +761,7 @@ if True:
 
 
 t_global_start = time.perf_counter()
-print("[T0] Entered Pythonista at %s" % time.strftime("%H:%M:%S"))
+print("[T0] Entered Pythonista at %s | build=%s" % (time.strftime("%H:%M:%S"), SCRIPT_BUILD))
 
 
 def _safe_script_dir():
@@ -781,10 +781,12 @@ ROOT_DIR = os.path.expanduser("~/Documents")
 TEXT_LOG_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local.txt")
 LEDGER_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local.jsonl")
 LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local-latest.json")
+DEBUG_SHORTCUT_DUMP_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local-shortcut-input.txt")
 SHORTCUT_INPUT_PATH = os.path.join(ROOT_DIR, "shortcut_offer_text.txt")
 SHORTCUT_INPUT_FALLBACK_PATH = os.path.expanduser("~/shortcut_offer_text.txt")
 SHORTCUT_INPUT_WAIT_SECONDS = 1.2
 SHORTCUT_INPUT_POLL_SECONDS = 0.08
+SCRIPT_BUILD = "2026-06-21-292604c"
 
 GOOD_HOURLY_MIN = 28.0
 BAD_HOURLY_MAX = 22.0
@@ -829,6 +831,11 @@ def _save_state(payload):
 def _write_json(path, payload):
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def _write_text(path, text):
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("%s" % (text or ""))
 
 
 def _maybe_fsync(handle):
@@ -1517,6 +1524,10 @@ def main():
             print("[input] Using Shortcut-extracted text from file.")
         else:
             print("[input] Using Shortcut-extracted text from clipboard.")
+        try:
+            _write_text(DEBUG_SHORTCUT_DUMP_PATH, shortcut_offer_text)
+        except Exception:
+            pass
         fetch_finished = time.perf_counter()
         convert_finished = fetch_finished
     else:
