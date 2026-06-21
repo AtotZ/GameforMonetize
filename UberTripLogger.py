@@ -786,9 +786,12 @@ LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local-latest.json")
 DEBUG_SHORTCUT_DUMP_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local-shortcut-input.txt")
 SHORTCUT_INPUT_PATH = os.path.join(ROOT_DIR, "shortcut_offer_text.txt")
 SHORTCUT_INPUT_SCRIPT_DIR_PATH = os.path.join(SCRIPT_DIR, "shortcut_offer_text.txt")
+SHORTCUT_INPUT_SCRIPT_DIR_NESTED_PATH = os.path.join(
+    SCRIPT_DIR, os.path.basename(os.path.normpath(SCRIPT_DIR)), "shortcut_offer_text.txt"
+)
 SHORTCUT_INPUT_FALLBACK_PATH = os.path.expanduser("~/shortcut_offer_text.txt")
-SHORTCUT_INPUT_WAIT_SECONDS = 1.2
-SHORTCUT_INPUT_POLL_SECONDS = 0.08
+SHORTCUT_INPUT_WAIT_SECONDS = 4.0
+SHORTCUT_INPUT_POLL_SECONDS = 0.10
 
 GOOD_HOURLY_MIN = 28.0
 BAD_HOURLY_MAX = 22.0
@@ -1795,6 +1798,8 @@ def _shortcut_source_tag(path):
     normalized = os.path.normpath(path or "")
     if normalized == os.path.normpath(SHORTCUT_INPUT_SCRIPT_DIR_PATH):
         return os.path.basename(os.path.normpath(SCRIPT_DIR)).upper() or "PYSCRIPT"
+    if normalized == os.path.normpath(SHORTCUT_INPUT_SCRIPT_DIR_NESTED_PATH):
+        return (os.path.basename(os.path.normpath(SCRIPT_DIR)).upper() or "PYSCRIPT") + "_NESTED"
     if normalized == os.path.normpath(SHORTCUT_INPUT_PATH):
         return "PYDOC"
     if normalized == os.path.normpath(SHORTCUT_INPUT_FALLBACK_PATH):
@@ -1807,6 +1812,7 @@ def _shortcut_input_candidates():
     seen = set()
     for path in (
         SHORTCUT_INPUT_SCRIPT_DIR_PATH,
+        SHORTCUT_INPUT_SCRIPT_DIR_NESTED_PATH,
         SHORTCUT_INPUT_PATH,
         SHORTCUT_INPUT_FALLBACK_PATH,
     ):
