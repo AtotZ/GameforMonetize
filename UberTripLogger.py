@@ -13,9 +13,8 @@ try:
 except Exception:
     clipboard = None
 
-try:
-    from onisai_offer_parser import parse_ocr_text
-except ModuleNotFoundError:
+# Always use the embedded parser so Pythonista runs from one file only.
+if True:
     POUND = "\u00a3"
     EURO = "\u20ac"
     STAR = "\u2605"
@@ -925,7 +924,7 @@ def _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0):
 def _looks_like_offer_text(ocr_text):
     text = "%s" % (ocr_text or "")
     lowered = text.lower()
-    has_price = bool(re.search(r"(?:Â£|\$|\â‚¬)\s*\d", text))
+    has_price = bool(re.search(r"[£$€]\s*\d", text))
     has_rating = bool(re.search(r"\b[345]\.\d{1,2}\b", text))
     has_minutes = len(re.findall(r"\b\d+(?:[.,]\d+)?\s*mins?\b", lowered)) >= 2
     has_miles = len(re.findall(r"\b\d+(?:[.,]\d+)?\s*(?:mi|miles?|ml)\b", lowered)) >= 2
@@ -939,7 +938,7 @@ def _offer_text_score(ocr_text):
     text = "%s" % (ocr_text or "")
     lowered = text.lower()
     score = 0
-    if re.search(r"(?:Â£|\$|\â‚¬)\s*\d", text):
+    if re.search(r"[£$€]\s*\d", text):
         score += 5
     score += min(4, len(re.findall(r"\b\d+(?:[.,]\d+)?\s*mins?\b", lowered)))
     score += min(4, len(re.findall(r"\b\d+(?:[.,]\d+)?\s*(?:mi|miles?|ml)\b", lowered)))
