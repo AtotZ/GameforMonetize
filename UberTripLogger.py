@@ -1250,6 +1250,38 @@ def _compact_ocr_preview(text, limit=120):
     return preview[: max(0, limit - 3)] + "..."
 
 
+def _looks_like_self_notification_capture(text):
+    lowered = ("%s" % (text or "")).lower()
+    has_own_banner = any(
+        token in lowered
+        for token in [
+            "triplogger parse alert",
+            "ocr ran, but required trip fields were missing",
+            "real price",
+            "rsp1",
+            "decline below",
+        ]
+    )
+    has_vehicle = any(
+        token in lowered
+        for token in [
+            "comfort",
+            "electric",
+            "uberx",
+            "uberxl",
+            "business comfort",
+            "uber exec",
+            "green",
+            "pet",
+            "assist",
+        ]
+    )
+    has_trip_pair = bool(
+        re.search(r"\b\d+(?:[.,]\d+)?\s*mins?\s*\(\s*\d+(?:[.,]\d+)?\s*(?:mi|miles?|ml)\s*\)", lowered)
+    )
+    return has_own_banner and not (has_vehicle and has_trip_pair)
+
+
 def _read_shortcut_offer_text():
     if clipboard is None:
         return ""
@@ -1524,6 +1556,18 @@ def main():
     if not parse_result or not parse_result["valid"]:
         if _looks_like_navigation_map(ocr_text):
             print("[guard] Active navigation map detected. Exiting silently.")
+            raise SystemExit(0)
+
+        if shortcut_offer_text and _looks_like_self_notification_capture(ocr_text):
+            print("[guard] Captured TripLogger notification text instead of an offer; exiting silently.")
+            latest_payload = {
+                "ok": False,
+                "reason": "self_notification_capture",
+                "ocr_text": ocr_text,
+                "ocr_seconds": round(ocr_time, 4),
+                "asset_offer_score": preselected_score,
+            }
+            _write_json(LATEST_JSON_PATH, latest_payload)
             raise SystemExit(0)
 
         parse_reason = parse_result["parseError"] if parse_result else "parse_failed"
