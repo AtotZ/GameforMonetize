@@ -1,4 +1,4 @@
-import datetime
+﻿import datetime
 import hashlib
 import json
 import os
@@ -731,6 +731,8 @@ ROOT_DIR = os.path.expanduser("~/Documents")
 TEXT_LOG_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local.txt")
 LEDGER_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local.jsonl")
 LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local-latest.json")
+SHORTCUT_INPUT_PATH = os.path.join(ROOT_DIR, "shortcut_offer_text.txt")
+SHORTCUT_INPUT_FALLBACK_PATH = os.path.expanduser("~/shortcut_offer_text.txt")
 
 GOOD_HOURLY_MIN = 28.0
 BAD_HOURLY_MAX = 22.0
@@ -745,6 +747,8 @@ CAR_MILES_PER_KWH = 4.0
 COST_PER_MILE = PRICE_PER_KWH / CAR_MILES_PER_KWH
 MAX_OCR_RETRIES = 3
 RECENT_ASSET_SCAN_LIMIT = 8
+FORCE_WRITE_FSYNC = False
+USE_SUMMARY_TARGET_FILES = False
 
 CCZ_OUTCODE_RE = re.compile(r"^(?:EC[1-4][A-Z]?|WC[12][A-Z]?|W1[A-Z]?|SW1[A-Z]?|SE1[A-Z]?)$", re.IGNORECASE)
 CCZ_FULL_POSTCODE_RE = re.compile(r"\b(?:EC[1-4][A-Z]?|WC[12][A-Z]?|W1[A-Z]?|SW1[A-Z]?|SE1[A-Z]?)\s*[0-9][A-Z]{2}\b", re.IGNORECASE)
@@ -775,11 +779,17 @@ def _write_json(path, payload):
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
+def _maybe_fsync(handle):
+    if not FORCE_WRITE_FSYNC:
+        return
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
 def _append_jsonl(path, payload):
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+        _maybe_fsync(handle)
 
 
 def _send_push_notification(title, body):
@@ -877,7 +887,7 @@ def _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0):
 def _looks_like_offer_text(ocr_text):
     text = "%s" % (ocr_text or "")
     lowered = text.lower()
-    has_price = bool(re.search(r"(?:£|\$|\€)\s*\d", text))
+    has_price = bool(re.search(r"(?:Â£|\$|\â‚¬)\s*\d", text))
     has_rating = bool(re.search(r"\b[345]\.\d{1,2}\b", text))
     has_minutes = len(re.findall(r"\b\d+(?:[.,]\d+)?\s*mins?\b", lowered)) >= 2
     has_miles = len(re.findall(r"\b\d+(?:[.,]\d+)?\s*(?:mi|miles?|ml)\b", lowered)) >= 2
@@ -891,7 +901,7 @@ def _offer_text_score(ocr_text):
     text = "%s" % (ocr_text or "")
     lowered = text.lower()
     score = 0
-    if re.search(r"(?:£|\$|\€)\s*\d", text):
+    if re.search(r"(?:Â£|\$|\â‚¬)\s*\d", text):
         score += 5
     score += min(4, len(re.findall(r"\b\d+(?:[.,]\d+)?\s*mins?\b", lowered)))
     score += min(4, len(re.findall(r"\b\d+(?:[.,]\d+)?\s*(?:mi|miles?|ml)\b", lowered)))
@@ -1129,6 +1139,24 @@ def _today_totals_from_ledger(path, today_date):
     }
 
 
+def _totals_after_append(totals_before_append, ledger_record):
+    return {
+        "trip_count": int(totals_before_append.get("trip_count") or 0) + 1,
+        "total_price": round(
+            float(totals_before_append.get("total_price") or 0.0)
+            + float(ledger_record.get("price") or 0.0),
+            2,
+        ),
+        "drive_minutes": int(
+            round(
+                float(totals_before_append.get("drive_minutes") or 0.0)
+                + float(ledger_record.get("pickup_min") or 0.0)
+                + float(ledger_record.get("trip_min") or 0.0)
+            )
+        ),
+    }
+
+
 def _today_summary_total_from_triplog(today_date):
     try:
         expected_name = "TripLog-%s-SUMMARY.txt" % today_date
@@ -1139,7 +1167,7 @@ def _today_summary_total_from_triplog(today_date):
             text = handle.read()
         headers = list(re.finditer(r"^==== .+?====\s*$", text, re.MULTILINE))
         scope = text[headers[-1].end():] if headers else text
-        prices = re.findall(r"💰\s*Uber Price:\s*£\s*([\d.]+)", scope)
+        prices = re.findall(r"ðŸ’°\s*Uber Price:\s*Â£\s*([\d.]+)", scope)
         return round(sum(float(price) for price in prices), 2)
     except Exception:
         return None
@@ -1161,7 +1189,7 @@ def _today_summary_drive_minutes_from_triplog(today_date):
             total_seconds += hours * 3600 + minutes * 60 + seconds
         pickup_minutes = sum(
             int(match.group(1))
-            for match in re.finditer(r"^⏱\s*Pickup Estimate:\s*(\d+)\s*min\b", scope, re.MULTILINE)
+            for match in re.finditer(r"^â±\s*Pickup Estimate:\s*(\d+)\s*min\b", scope, re.MULTILINE)
         )
         return int(round(total_seconds / 60.0)) + pickup_minutes
     except Exception:
@@ -1196,7 +1224,7 @@ def _read_shortcut_offer_text():
     text = text.strip()
     if len(text) < 12:
         return ""
-    if not re.search(r"(?:£|\$|\€)\s*\d", text):
+    if not re.search("[£$€]\\s*\\d", text):
         return ""
     return text
 
@@ -1208,7 +1236,7 @@ def _is_reliable_rating_source(debug):
     if source == "compact_numeric":
         line = "%s" % (debug.get("rating_line") or "")
         return bool(
-            re.search(r"[<>*★]", line)
+            re.search(r"[<>*â˜…]", line)
             or re.search(r"\b(?:rating|driver)\b", line, re.IGNORECASE)
             or re.match(r"^[A-Za-z]{1,4}\s*[345]\d{1,2}\s*[<>]?\s*$", line)
         )
@@ -1339,7 +1367,7 @@ def _build_log_block(now_str, trip_label, ocr_time, parse_result, metrics, ocr_t
         target_delta_line = "Target Delta: %s" % _format_signed_pounds_per_minute(
             target_insight.get("delta_per_min_gbp") or 0.0
         ).replace("/min", "/m")
-    ccz_line = "CCZ Bonus Applied: %s" % ("YES (+£%.2f)" % CCZ_BONUS_GBP if metrics["ccz_bonus_applied"] else "NO")
+    ccz_line = "CCZ Bonus Applied: %s" % ("YES (+Â£%.2f)" % CCZ_BONUS_GBP if metrics["ccz_bonus_applied"] else "NO")
     decline_line = "Low Rating Decline: %s | Reliable Source: %s" % (
         "YES" if low_rating_decision["should_decline_low_rating"] else "NO",
         "YES" if low_rating_decision["rating_reliable"] else "NO",
@@ -1388,7 +1416,7 @@ def _build_log_block(now_str, trip_label, ocr_time, parse_result, metrics, ocr_t
 
 def main():
     state = _load_state()
-    shortcut_offer_text = _read_shortcut_offer_text()
+    shortcut_offer_text, shortcut_input_mode = _read_shortcut_offer_input()
     latest_asset = None
     selected_asset_id = None
     selected_asset_created = None
@@ -1401,7 +1429,10 @@ def main():
     convert_finished = fetch_started
 
     if shortcut_offer_text:
-        print("[input] Using Shortcut-extracted text from clipboard.")
+        if shortcut_input_mode == "file":
+            print("[input] Using Shortcut-extracted text from file.")
+        else:
+            print("[input] Using Shortcut-extracted text from clipboard.")
         fetch_finished = time.perf_counter()
         convert_finished = fetch_finished
     else:
@@ -1413,7 +1444,7 @@ def main():
             print("[guard] Aborting. Photo guard timed out (no new photo registered).")
             _send_push_notification(
                 "TripLogger Alert",
-                "No Shortcut text and no usable new image were available. Try the scan again.",
+                "No Shortcut text file and no usable new image were available. Try the scan again.",
             )
             raise SystemExit(0)
 
@@ -1527,8 +1558,12 @@ def main():
         "rating_action": "DECLINE_LOW_RATING" if low_rating_decision["should_decline_low_rating"] else "NONE",
         "ocr_sha1": ocr_sha1,
     }
-    summary_total = _today_summary_total_from_triplog(today_date)
-    summary_drive_minutes = _today_summary_drive_minutes_from_triplog(today_date)
+    if USE_SUMMARY_TARGET_FILES:
+        summary_total = _today_summary_total_from_triplog(today_date)
+        summary_drive_minutes = _today_summary_drive_minutes_from_triplog(today_date)
+    else:
+        summary_total = None
+        summary_drive_minutes = None
     target_total_gbp = summary_total if summary_total is not None else totals_before_append["total_price"]
     target_drive_minutes = summary_drive_minutes if summary_drive_minutes is not None else totals_before_append["drive_minutes"]
     target_insight = _build_local_target_insight(target_total_gbp, target_drive_minutes, metrics["per_min_adj"])
@@ -1548,11 +1583,10 @@ def main():
 
     with open(TEXT_LOG_PATH, "a", encoding="utf-8") as handle:
         handle.write(block)
-        handle.flush()
-        os.fsync(handle.fileno())
+        _maybe_fsync(handle)
 
     _append_jsonl(LEDGER_PATH, ledger_record)
-    totals_after_append = _today_totals_from_ledger(LEDGER_PATH, today_date)
+    totals_after_append = _totals_after_append(totals_before_append, ledger_record)
 
     latest_payload = {
         "ok": True,
@@ -1563,6 +1597,7 @@ def main():
         "ocr_sha1": ocr_sha1,
         "ocr_text": ocr_text,
         "input_mode": "shortcut_text" if shortcut_offer_text else "photo_asset",
+        "shortcut_input_mode": shortcut_input_mode if shortcut_offer_text else "",
         "parse": parse_result,
         "metrics": metrics,
         "ledger_record": ledger_record,
@@ -1616,6 +1651,43 @@ def main():
         time.strftime("%H:%M:%S"),
         t_global_end - t_global_start,
     ))
+
+
+def _looks_like_offer_text(text):
+    text = ("%s" % (text or "")).strip()
+    if len(text) < 12:
+        return False
+    return bool(re.search("[£$€]\\s*\\d", text))
+
+
+def _consume_shortcut_offer_text_file():
+    try:
+        for path in (SHORTCUT_INPUT_PATH, SHORTCUT_INPUT_FALLBACK_PATH):
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                text = handle.read().strip()
+            if not _looks_like_offer_text(text):
+                continue
+            try:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("")
+            except Exception:
+                pass
+            return text
+        return ""
+    except Exception:
+        return ""
+
+
+def _read_shortcut_offer_input():
+    file_text = _consume_shortcut_offer_text_file()
+    if file_text:
+        return file_text, "file"
+    clipboard_text = _read_shortcut_offer_text()
+    if clipboard_text:
+        return clipboard_text, "clipboard"
+    return "", ""
 
 
 if __name__ == "__main__":
