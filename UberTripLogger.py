@@ -7,7 +7,7 @@ import time
 import webbrowser
 
 import photos
-from objc_util import ObjCClass, ObjCInstance
+from objc_util import CGRect, ObjCClass, ObjCInstance
 
 try:
     from onisai_offer_parser import parse_ocr_text
@@ -858,11 +858,16 @@ def _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0):
         time.sleep(poll_interval_s)
 
 
-def _run_ocr_from_cgimage(cgimage):
+def _run_ocr_from_cgimage(cgimage, region_of_interest=None):
     start_time = time.perf_counter()
     handler = VNImageRequestHandler.alloc().initWithCGImage_options_(cgimage, None)
     request = VNRecognizeTextRequest.alloc().init()
     request.setRecognitionLevel_(0)
+    if region_of_interest is not None:
+        try:
+            request.setRegionOfInterest_(region_of_interest)
+        except Exception:
+            pass
     handler.performRequests_error_([request], None)
     ocr_time = time.perf_counter() - start_time
 
@@ -870,6 +875,26 @@ def _run_ocr_from_cgimage(cgimage):
     for result in request.results():
         lines.append("* %s" % result.text())
     return "\n".join(lines), ocr_time
+
+
+def _run_offer_focused_ocr(cgimage):
+    full_text, full_time = _run_ocr_from_cgimage(cgimage)
+    focused_region = CGRect((0.0, 0.0), (1.0, 0.62))
+    lower_text, lower_time = _run_ocr_from_cgimage(cgimage, focused_region)
+    combined_parts = []
+    if lower_text.strip():
+        combined_parts.append(lower_text.strip())
+    if full_text.strip():
+        combined_parts.append(full_text.strip())
+    combined_text = "\n".join(combined_parts).strip()
+    return {
+        "full_text": full_text,
+        "lower_text": lower_text,
+        "combined_text": combined_text or full_text,
+        "full_time": full_time,
+        "lower_time": lower_time,
+        "total_time": full_time + lower_time,
+    }
 
 
 def _looks_like_navigation_map(ocr_text):
@@ -1292,9 +1317,16 @@ def main():
     ocr_time = 0.0
     parse_result = None
     for _attempt in range(1, MAX_OCR_RETRIES + 1):
-        ocr_text, ocr_time = _run_ocr_from_cgimage(cgimage)
+        ocr_bundle = _run_offer_focused_ocr(cgimage)
+        ocr_text = ocr_bundle["combined_text"]
+        ocr_time = ocr_bundle["total_time"]
         parse_result = parse_ocr_text(ocr_text)
         if parse_result["valid"]:
+            break
+        focused_parse_result = parse_ocr_text(ocr_bundle["lower_text"])
+        if focused_parse_result["valid"]:
+            ocr_text = ocr_bundle["lower_text"]
+            parse_result = focused_parse_result
             break
         time.sleep(0.05)
 
