@@ -8,6 +8,10 @@ import webbrowser
 
 import photos
 from objc_util import CGRect, ObjCClass, ObjCInstance
+try:
+    import clipboard
+except Exception:
+    clipboard = None
 
 try:
     from onisai_offer_parser import parse_ocr_text
@@ -1181,6 +1185,22 @@ def _compact_ocr_preview(text, limit=120):
     return preview[: max(0, limit - 3)] + "..."
 
 
+def _read_shortcut_offer_text():
+    if clipboard is None:
+        return ""
+    try:
+        raw = clipboard.get()
+    except Exception:
+        return ""
+    text = "%s" % (raw or "")
+    text = text.strip()
+    if len(text) < 12:
+        return ""
+    if not re.search(r"(?:£|\$|\€)\s*\d", text):
+        return ""
+    return text
+
+
 def _is_reliable_rating_source(debug):
     source = ("%s" % (debug.get("rating_source") or "")).strip().lower()
     if source in ("contextual_match", "star_match"):
@@ -1368,42 +1388,70 @@ def _build_log_block(now_str, trip_label, ocr_time, parse_result, metrics, ocr_t
 
 def main():
     state = _load_state()
+    shortcut_offer_text = _read_shortcut_offer_text()
+    latest_asset = None
+    selected_asset_id = None
+    selected_asset_created = None
 
     fetch_started = time.perf_counter()
-    _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0)
-    latest_asset, preselected_ocr_bundle, preselected_score = _select_best_recent_offer_asset(state)
-    fetch_finished = time.perf_counter()
+    preselected_ocr_bundle = None
+    preselected_score = None
+    cgimage = None
+    fetch_finished = fetch_started
+    convert_finished = fetch_started
 
-    if latest_asset is None:
-        print("[guard] Aborting. Photo guard timed out (no new photo registered).")
-        _send_push_notification(
-            "TripLogger Alert",
-            "Photo library did not update quickly enough. Try the scan again.",
-        )
-        raise SystemExit(0)
+    if shortcut_offer_text:
+        print("[input] Using Shortcut-extracted text from clipboard.")
+        fetch_finished = time.perf_counter()
+        convert_finished = fetch_finished
+    else:
+        _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0)
+        latest_asset, preselected_ocr_bundle, preselected_score = _select_best_recent_offer_asset(state)
+        fetch_finished = time.perf_counter()
 
-    ui_image = latest_asset.get_ui_image()
-    objc_image = ObjCInstance(ui_image)
-    cgimage = objc_image.CGImage()
-    convert_finished = time.perf_counter()
+        if latest_asset is None:
+            print("[guard] Aborting. Photo guard timed out (no new photo registered).")
+            _send_push_notification(
+                "TripLogger Alert",
+                "No Shortcut text and no usable new image were available. Try the scan again.",
+            )
+            raise SystemExit(0)
+
+        ui_image = latest_asset.get_ui_image()
+        objc_image = ObjCInstance(ui_image)
+        cgimage = objc_image.CGImage()
+        convert_finished = time.perf_counter()
+        selected_asset_id = getattr(latest_asset, "local_id", None)
+        selected_asset_created = _created_str(getattr(latest_asset, "creation_date", None))
 
     ocr_text = ""
     ocr_time = 0.0
     parse_result = None
-    for _attempt in range(1, MAX_OCR_RETRIES + 1):
-        ocr_bundle = preselected_ocr_bundle or _run_offer_focused_ocr(cgimage)
-        preselected_ocr_bundle = None
-        ocr_text = ocr_bundle["combined_text"]
-        ocr_time = ocr_bundle["total_time"]
+    if shortcut_offer_text:
+        ocr_text = shortcut_offer_text
         parse_result = parse_ocr_text(ocr_text)
-        if parse_result["valid"]:
-            break
-        focused_parse_result = parse_ocr_text(ocr_bundle["lower_text"])
-        if focused_parse_result["valid"]:
-            ocr_text = ocr_bundle["lower_text"]
-            parse_result = focused_parse_result
-            break
-        time.sleep(0.05)
+    else:
+        for _attempt in range(1, MAX_OCR_RETRIES + 1):
+            ocr_bundle = preselected_ocr_bundle or _run_offer_focused_ocr(cgimage)
+            preselected_ocr_bundle = None
+            ocr_text = ocr_bundle["combined_text"]
+            ocr_time = ocr_bundle["total_time"]
+            parse_result = parse_ocr_text(ocr_text)
+            if parse_result["valid"]:
+                break
+            focused_parse_result = parse_ocr_text(ocr_bundle["lower_text"])
+            if focused_parse_result["valid"]:
+                ocr_text = ocr_bundle["lower_text"]
+                parse_result = focused_parse_result
+                break
+            time.sleep(0.05)
+    if parse_result and parse_result["valid"] and shortcut_offer_text:
+        print("[input] Parsed Shortcut text successfully.")
+    elif parse_result and parse_result["valid"]:
+        print("[input] Parsed selected photo asset successfully.")
+    if not shortcut_offer_text:
+        selected_asset_id = getattr(latest_asset, "local_id", None) if latest_asset else None
+        selected_asset_created = _created_str(getattr(latest_asset, "creation_date", None)) if latest_asset else None
 
     if not parse_result or not parse_result["valid"]:
         if _looks_like_navigation_map(ocr_text):
@@ -1510,11 +1558,12 @@ def main():
     latest_payload = {
         "ok": True,
         "timestamp": now_str,
-        "selected_asset_id": getattr(latest_asset, "local_id", None),
-        "selected_asset_created": _created_str(getattr(latest_asset, "creation_date", None)),
+        "selected_asset_id": selected_asset_id,
+        "selected_asset_created": selected_asset_created,
         "ocr_seconds": round(ocr_time, 4),
         "ocr_sha1": ocr_sha1,
         "ocr_text": ocr_text,
+        "input_mode": "shortcut_text" if shortcut_offer_text else "photo_asset",
         "parse": parse_result,
         "metrics": metrics,
         "ledger_record": ledger_record,
@@ -1524,13 +1573,11 @@ def main():
     }
     _write_json(LATEST_JSON_PATH, latest_payload)
 
-    _save_state(
-        {
-            "last_asset_id": getattr(latest_asset, "local_id", None),
-            "last_created": _created_str(getattr(latest_asset, "creation_date", None)),
-            "last_ocr_sha1": ocr_sha1,
-        }
-    )
+    state_payload = {"last_ocr_sha1": ocr_sha1}
+    if latest_asset is not None:
+        state_payload["last_asset_id"] = getattr(latest_asset, "local_id", None)
+        state_payload["last_created"] = _created_str(getattr(latest_asset, "creation_date", None))
+    _save_state(state_payload)
 
     if low_rating_decision["should_decline_low_rating"]:
         title_line = "\u2b50 %.2f | Decline below %.2f" % (
