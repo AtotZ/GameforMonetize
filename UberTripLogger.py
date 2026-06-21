@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 import webbrowser
 
@@ -1325,6 +1326,50 @@ def _read_shortcut_offer_text():
     return text
 
 
+def _looks_like_direct_text_payload(text):
+    value = ("%s" % (text or "")).strip()
+    if len(value) < 20:
+        return False
+    lowered = value.lower()
+    return (
+        bool(re.search("[£$€]\\s*\\d", value))
+        or " mins" in lowered
+        or " min " in lowered
+        or " mi" in lowered
+        or "miles" in lowered
+        or "holiday pay" in lowered
+        or "holiday entitlement" in lowered
+        or "electric" in lowered
+        or "comfort" in lowered
+        or "uberx" in lowered
+        or "match" in lowered
+        or "confirm" in lowered
+    )
+
+
+def _consume_shortcut_offer_text_argv():
+    plain_text_items = []
+    for arg in sys.argv[1:]:
+        candidate = "%s" % (arg or "")
+        if not candidate.strip():
+            continue
+        if os.path.exists(candidate):
+            continue
+        plain_text_items.append(candidate)
+    joined_text = "\n".join(plain_text_items).strip()
+    if not _looks_like_direct_text_payload(joined_text):
+        return None
+    return {
+        "text": joined_text,
+        "path": "",
+        "tag": "ARGV",
+        "bytes": len(joined_text.encode("utf-8", errors="ignore")),
+        "exists": True,
+        "looks_like_offer": True,
+        "arg_count": len(plain_text_items),
+    }
+
+
 def _is_reliable_rating_source(debug):
     source = ("%s" % (debug.get("rating_source") or "")).strip().lower()
     if source in ("contextual_match", "star_match"):
@@ -1525,7 +1570,15 @@ def main():
     convert_finished = fetch_started
 
     if shortcut_offer_text:
-        if shortcut_input_mode == "file":
+        if shortcut_input_mode == "argv":
+            print(
+                "[input] Using Shortcut-extracted text from arguments (%s, %s bytes)."
+                % (
+                    shortcut_source.get("tag") or "ARGV",
+                    shortcut_source.get("bytes") or len(shortcut_offer_text),
+                )
+            )
+        elif shortcut_input_mode == "file":
             print(
                 "[input] Using Shortcut-extracted text from file (%s, %s bytes)."
                 % (
@@ -1534,7 +1587,7 @@ def main():
                 )
             )
         else:
-            print("[input] Using Shortcut-extracted text from clipboard.")
+            print("[input] Using Shortcut-extracted text from fallback input.")
         try:
             _write_text(DEBUG_SHORTCUT_DUMP_PATH, shortcut_offer_text)
         except Exception:
@@ -1872,6 +1925,9 @@ def _consume_shortcut_offer_text_file():
 
 
 def _read_shortcut_offer_input():
+    argv_payload = _consume_shortcut_offer_text_argv()
+    if argv_payload and argv_payload.get("text"):
+        return argv_payload["text"], "argv", argv_payload
     file_payload = _consume_shortcut_offer_text_file()
     if file_payload and file_payload.get("text"):
         return file_payload["text"], "file", file_payload
