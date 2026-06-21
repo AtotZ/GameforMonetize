@@ -785,6 +785,7 @@ LEDGER_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local.jsonl")
 LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local-latest.json")
 DEBUG_SHORTCUT_DUMP_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local-shortcut-input.txt")
 SHORTCUT_INPUT_PATH = os.path.join(ROOT_DIR, "shortcut_offer_text.txt")
+SHORTCUT_INPUT_SCRIPT_DIR_PATH = os.path.join(SCRIPT_DIR, "shortcut_offer_text.txt")
 SHORTCUT_INPUT_FALLBACK_PATH = os.path.expanduser("~/shortcut_offer_text.txt")
 SHORTCUT_INPUT_WAIT_SECONDS = 1.2
 SHORTCUT_INPUT_POLL_SECONDS = 0.08
@@ -1614,16 +1615,18 @@ def main():
             "shortcut_source": shortcut_source,
         }
         _write_json(LATEST_JSON_PATH, latest_payload)
+        shortcut_diag = "SRC %s %sB" % (
+            shortcut_source.get("tag") or "PHOTO",
+            shortcut_source.get("bytes") or 0,
+        )
+        if shortcut_source.get("path"):
+            shortcut_diag += " | %s" % os.path.basename(shortcut_source.get("path") or "")
+        if shortcut_source.get("invalid_reason"):
+            shortcut_diag += " | %s" % shortcut_source.get("invalid_reason")
         _send_push_notification(
             "TripLogger Parse Alert %s %s"
             % (SCRIPT_BUILD_TAG, shortcut_source.get("tag") or "PHOTO"),
-            "SRC %s %sB | %s | %s"
-            % (
-                shortcut_source.get("tag") or "PHOTO",
-                shortcut_source.get("bytes") or 0,
-                parse_reason,
-                ocr_preview,
-            ),
+            "%s | %s | %s" % (shortcut_diag, parse_reason, ocr_preview),
         )
         raise SystemExit(0)
 
@@ -1792,20 +1795,49 @@ def _shortcut_source_tag(path):
     normalized = os.path.normpath(path or "")
     if normalized == os.path.normpath(SHORTCUT_INPUT_PATH):
         return "PYDOC"
+    if normalized == os.path.normpath(SHORTCUT_INPUT_SCRIPT_DIR_PATH):
+        return "PYSCRIPT"
     if normalized == os.path.normpath(SHORTCUT_INPUT_FALLBACK_PATH):
         return "PYROOT"
     return "FILE"
 
 
+def _shortcut_input_candidates():
+    ordered = []
+    seen = set()
+    for path in (
+        SHORTCUT_INPUT_PATH,
+        SHORTCUT_INPUT_SCRIPT_DIR_PATH,
+        SHORTCUT_INPUT_FALLBACK_PATH,
+    ):
+        normalized = os.path.normpath(path)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(path)
+    return ordered
+
+
 def _consume_shortcut_offer_text_file():
     deadline = time.perf_counter() + SHORTCUT_INPUT_WAIT_SECONDS
+    best_invalid_payload = None
     while True:
         try:
-            for path in (SHORTCUT_INPUT_PATH, SHORTCUT_INPUT_FALLBACK_PATH):
+            for path in _shortcut_input_candidates():
                 if not os.path.exists(path):
                     continue
                 with open(path, "r", encoding="utf-8", errors="ignore") as handle:
                     text = handle.read().strip()
+                payload = {
+                    "text": text,
+                    "path": path,
+                    "tag": _shortcut_source_tag(path),
+                    "bytes": len(text.encode("utf-8", errors="ignore")),
+                    "exists": True,
+                    "looks_like_offer": _looks_like_offer_text(text),
+                }
+                if payload["bytes"] > 0 and best_invalid_payload is None:
+                    best_invalid_payload = payload
                 if not _looks_like_offer_text(text):
                     continue
                 try:
@@ -1813,16 +1845,23 @@ def _consume_shortcut_offer_text_file():
                         handle.write("")
                 except Exception:
                     pass
-                return {
-                    "text": text,
-                    "path": path,
-                    "tag": _shortcut_source_tag(path),
-                    "bytes": len(text.encode("utf-8", errors="ignore")),
-                }
+                return payload
         except Exception:
             pass
         if time.perf_counter() >= deadline:
-            return None
+            if best_invalid_payload is not None:
+                best_invalid_payload["invalid_reason"] = "content_rejected"
+                return best_invalid_payload
+            return {
+                "text": "",
+                "path": "",
+                "tag": "PHOTO",
+                "bytes": 0,
+                "exists": False,
+                "looks_like_offer": False,
+                "invalid_reason": "missing_file",
+                "checked_paths": _shortcut_input_candidates(),
+            }
         time.sleep(SHORTCUT_INPUT_POLL_SECONDS)
 
 
@@ -1830,7 +1869,7 @@ def _read_shortcut_offer_input():
     file_payload = _consume_shortcut_offer_text_file()
     if file_payload and file_payload.get("text"):
         return file_payload["text"], "file", file_payload
-    return "", "", {"tag": "PHOTO", "path": "", "bytes": 0}
+    return "", "", (file_payload or {"tag": "PHOTO", "path": "", "bytes": 0})
 
 
 if __name__ == "__main__":
