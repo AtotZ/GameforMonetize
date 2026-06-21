@@ -570,11 +570,9 @@ except ModuleNotFoundError:
         base = ("%s" % (base_address or "")).strip()
         if not base or UK_PC_RE.search(base):
             return ""
-
         token = _normalize_postcode_continuation_token(continuation_raw)
         if not token:
             return ""
-
         suffix_match = re.match(
             r"^(.*?)([A-Z]{1,2}[A-Z0-9IOZ]{1,3})(?:\s*([O0IZ]))?\s*$",
             base,
@@ -582,15 +580,12 @@ except ModuleNotFoundError:
         )
         if not suffix_match:
             return ""
-
         prefix = suffix_match.group(1) or ""
         outward = _normalize_postcode_outward_token(suffix_match.group(2) or "")
         trailing_char = _fix_postcode_lead_digit_confusion(suffix_match.group(3) or "")
         inward = ""
-
         if not outward:
             return ""
-
         if trailing_char:
             if re.match(r"^[A-Z]{2}$", token):
                 inward = "%s%s" % (trailing_char, token)
@@ -598,14 +593,11 @@ except ModuleNotFoundError:
                 inward = "%s%s" % (_fix_postcode_lead_digit_confusion(token[0]), token[1:])
         elif re.match(r"^[0-9OIZ][A-Z]{2}$", token):
             inward = "%s%s" % (_fix_postcode_lead_digit_confusion(token[0]), token[1:])
-
         if not inward:
             return ""
-
         postcode = ("%s %s" % (outward, inward)).upper()
         if not UK_PC_RE.search(postcode):
             return ""
-
         return re.sub(r"\s+", " ", ("%s%s" % (prefix, postcode)).strip())
 
     def _collect_address_after_index(lines, start_index, max_lines=5):
@@ -825,23 +817,24 @@ def _created_str(dt_obj):
 def _is_same_as_previous(asset, state):
     if not asset:
         return False
-    previous_id = state.get("last_asset_id")
-    previous_created = state.get("last_created")
+    prev_asset_id = state.get("last_asset_id")
+    prev_created = state.get("last_created")
     asset_id = getattr(asset, "local_id", None)
     created = getattr(asset, "creation_date", None)
-    created_str = _created_str(created) if created else ""
-    same_id = bool(asset_id and previous_id and asset_id == previous_id)
-    same_time = bool(created_str and previous_created and created_str == previous_created)
+    created_s = _created_str(created) if created else ""
+    same_id = asset_id and prev_asset_id and asset_id == prev_asset_id
+    same_time = created_s and prev_created and created_s == prev_created
     return same_id or same_time
 
 
 def _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0):
     time.sleep(0.15)
-    started = time.perf_counter()
+    start_wait = time.perf_counter()
     attempt = 0
+
     while True:
         attempt += 1
-        if (time.perf_counter() - started) > timeout_s:
+        if (time.perf_counter() - start_wait) > timeout_s:
             print("[guard] Photo guard timed out waiting for a new image asset.")
             return None
 
@@ -851,13 +844,13 @@ def _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0):
             continue
 
         created = getattr(asset, "creation_date", None)
-        created_str = _created_str(created) if created else ""
+        created_s = _created_str(created) if created else ""
         asset_id = getattr(asset, "local_id", None)
 
         if not _is_same_as_previous(asset, state):
             print(
                 "[guard] Fresh asset detected on attempt %d | id=%s | created=%s"
-                % (attempt, asset_id, created_str),
+                % (attempt, asset_id, created_s),
                 flush=True,
             )
             return asset
@@ -866,33 +859,29 @@ def _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0):
 
 
 def _run_ocr_from_cgimage(cgimage):
-    started = time.perf_counter()
+    start_time = time.perf_counter()
     handler = VNImageRequestHandler.alloc().initWithCGImage_options_(cgimage, None)
     request = VNRecognizeTextRequest.alloc().init()
     request.setRecognitionLevel_(0)
     handler.performRequests_error_([request], None)
-    elapsed = time.perf_counter() - started
+    ocr_time = time.perf_counter() - start_time
+
     lines = []
-    for result in request.results() or []:
-        try:
-            text = "%s" % result.text()
-        except Exception:
-            text = ""
-        text = text.strip()
-        if text:
-            lines.append(text)
-    return "\n".join(lines).strip(), elapsed
+    for result in request.results():
+        lines.append("* %s" % result.text())
+    return "\n".join(lines), ocr_time
 
 
 def _looks_like_navigation_map(ocr_text):
-    lowered = (ocr_text or "").lower()
     map_keywords = [
-        "dropping off",
-        "arriving",
-        "speedometer",
+        "Dropping off",
+        "Dropping",
+        "LIMIT",
+        "Speedometer",
+        "Arriving",
         "towards your destination",
     ]
-    return any(keyword in lowered for keyword in map_keywords)
+    return any(keyword in ocr_text for keyword in map_keywords)
 
 
 def _contextual_pickup_status(pickup_miles, pickup_min, trip_miles, trip_min):
@@ -1048,7 +1037,7 @@ def _today_summary_total_from_triplog(today_date):
             text = handle.read()
         headers = list(re.finditer(r"^==== .+?====\s*$", text, re.MULTILINE))
         scope = text[headers[-1].end():] if headers else text
-        prices = re.findall(r"\U0001f4b0\s*Uber Price:\s*\u00a3\s*([\d.]+)", scope)
+        prices = re.findall(r"💰\s*Uber Price:\s*£\s*([\d.]+)", scope)
         return round(sum(float(price) for price in prices), 2)
     except Exception:
         return None
@@ -1070,7 +1059,7 @@ def _today_summary_drive_minutes_from_triplog(today_date):
             total_seconds += hours * 3600 + minutes * 60 + seconds
         pickup_minutes = sum(
             int(match.group(1))
-            for match in re.finditer(r"^\u23f1\s*Pickup Estimate:\s*(\d+)\s*min\b", scope, re.MULTILINE)
+            for match in re.finditer(r"^⏱\s*Pickup Estimate:\s*(\d+)\s*min\b", scope, re.MULTILINE)
         )
         return int(round(total_seconds / 60.0)) + pickup_minutes
     except Exception:
@@ -1087,6 +1076,13 @@ def _format_signed_pounds_per_minute(value):
     return "%s\u00a3%.2f/min" % (sign, amount)
 
 
+def _compact_ocr_preview(text, limit=120):
+    preview = re.sub(r"\s+", " ", "%s" % (text or "")).strip()
+    if len(preview) <= limit:
+        return preview
+    return preview[: max(0, limit - 3)] + "..."
+
+
 def _is_reliable_rating_source(debug):
     source = ("%s" % (debug.get("rating_source") or "")).strip().lower()
     if source in ("contextual_match", "star_match"):
@@ -1094,7 +1090,7 @@ def _is_reliable_rating_source(debug):
     if source == "compact_numeric":
         line = "%s" % (debug.get("rating_line") or "")
         return bool(
-            re.search(r"[<>*\u2605]", line)
+            re.search(r"[<>*★]", line)
             or re.search(r"\b(?:rating|driver)\b", line, re.IGNORECASE)
             or re.match(r"^[A-Za-z]{1,4}\s*[345]\d{1,2}\s*[<>]?\s*$", line)
         )
@@ -1225,7 +1221,7 @@ def _build_log_block(now_str, trip_label, ocr_time, parse_result, metrics, ocr_t
         target_delta_line = "Target Delta: %s" % _format_signed_pounds_per_minute(
             target_insight.get("delta_per_min_gbp") or 0.0
         ).replace("/min", "/m")
-    ccz_line = "CCZ Bonus Applied: %s" % ("YES (+\u00a3%.2f)" % CCZ_BONUS_GBP if metrics["ccz_bonus_applied"] else "NO")
+    ccz_line = "CCZ Bonus Applied: %s" % ("YES (+£%.2f)" % CCZ_BONUS_GBP if metrics["ccz_bonus_applied"] else "NO")
     decline_line = "Low Rating Decline: %s | Reliable Source: %s" % (
         "YES" if low_rating_decision["should_decline_low_rating"] else "NO",
         "YES" if low_rating_decision["rating_reliable"] else "NO",
@@ -1307,16 +1303,18 @@ def main():
             print("[guard] Active navigation map detected. Exiting silently.")
             raise SystemExit(0)
 
+        parse_reason = parse_result["parseError"] if parse_result else "parse_failed"
+        ocr_preview = _compact_ocr_preview(ocr_text, 110) or "no OCR text"
         latest_payload = {
             "ok": False,
-            "reason": parse_result["parseError"] if parse_result else "parse_failed",
+            "reason": parse_reason,
             "ocr_text": ocr_text,
             "ocr_seconds": round(ocr_time, 4),
         }
         _write_json(LATEST_JSON_PATH, latest_payload)
         _send_push_notification(
             "TripLogger Parse Alert",
-            "OCR ran, but required trip fields were missing.",
+            "%s | %s" % (parse_reason, ocr_preview),
         )
         raise SystemExit(0)
 
@@ -1380,6 +1378,7 @@ def main():
     summary_drive_minutes = _today_summary_drive_minutes_from_triplog(today_date)
     target_total_gbp = summary_total if summary_total is not None else totals_after_append["total_price"]
     target_drive_minutes = summary_drive_minutes if summary_drive_minutes is not None else totals_after_append["drive_minutes"]
+    left_minutes = max(0, DEFAULT_SHIFT_LIMIT_MINUTES - target_drive_minutes)
     target_insight = _build_local_target_insight(target_total_gbp, target_drive_minutes, metrics["per_min_adj"])
 
     block = _build_log_block(
