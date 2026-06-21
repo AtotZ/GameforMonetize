@@ -1527,14 +1527,10 @@ def main():
         "rating_action": "DECLINE_LOW_RATING" if low_rating_decision["should_decline_low_rating"] else "NONE",
         "ocr_sha1": ocr_sha1,
     }
-    _append_jsonl(LEDGER_PATH, ledger_record)
-
-    totals_after_append = _today_totals_from_ledger(LEDGER_PATH, today_date)
     summary_total = _today_summary_total_from_triplog(today_date)
     summary_drive_minutes = _today_summary_drive_minutes_from_triplog(today_date)
-    target_total_gbp = summary_total if summary_total is not None else totals_after_append["total_price"]
-    target_drive_minutes = summary_drive_minutes if summary_drive_minutes is not None else totals_after_append["drive_minutes"]
-    left_minutes = max(0, DEFAULT_SHIFT_LIMIT_MINUTES - target_drive_minutes)
+    target_total_gbp = summary_total if summary_total is not None else totals_before_append["total_price"]
+    target_drive_minutes = summary_drive_minutes if summary_drive_minutes is not None else totals_before_append["drive_minutes"]
     target_insight = _build_local_target_insight(target_total_gbp, target_drive_minutes, metrics["per_min_adj"])
 
     block = _build_log_block(
@@ -1555,6 +1551,9 @@ def main():
         handle.flush()
         os.fsync(handle.fileno())
 
+    _append_jsonl(LEDGER_PATH, ledger_record)
+    totals_after_append = _today_totals_from_ledger(LEDGER_PATH, today_date)
+
     latest_payload = {
         "ok": True,
         "timestamp": now_str,
@@ -1567,6 +1566,7 @@ def main():
         "parse": parse_result,
         "metrics": metrics,
         "ledger_record": ledger_record,
+        "today_totals_before_offer": totals_before_append,
         "today_totals": totals_after_append,
         "target_progress_local": target_insight,
         "low_rating_decision": low_rating_decision,
