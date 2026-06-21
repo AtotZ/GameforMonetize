@@ -740,6 +740,7 @@ PRICE_PER_KWH = 17.83 / 44.57
 CAR_MILES_PER_KWH = 4.0
 COST_PER_MILE = PRICE_PER_KWH / CAR_MILES_PER_KWH
 MAX_OCR_RETRIES = 3
+RECENT_ASSET_SCAN_LIMIT = 8
 
 CCZ_OUTCODE_RE = re.compile(r"^(?:EC[1-4][A-Z]?|WC[12][A-Z]?|W1[A-Z]?|SW1[A-Z]?|SE1[A-Z]?)$", re.IGNORECASE)
 CCZ_FULL_POSTCODE_RE = re.compile(r"\b(?:EC[1-4][A-Z]?|WC[12][A-Z]?|W1[A-Z]?|SW1[A-Z]?|SE1[A-Z]?)\s*[0-9][A-Z]{2}\b", re.IGNORECASE)
@@ -802,8 +803,19 @@ def _send_push_notification(title, body):
     center.addNotificationRequest_withCompletionHandler_(request, None)
 
 
+def _recent_assets(limit=RECENT_ASSET_SCAN_LIMIT):
+    assets = photos.get_assets(media_type="image")
+    if not assets:
+        return []
+    try:
+        return list(assets[-limit:])
+    except Exception:
+        tail = assets[-limit:]
+        return list(tail) if tail else []
+
+
 def _latest_asset():
-    assets = photos.get_assets(media_type="image")[-1:]
+    assets = _recent_assets(1)
     return assets[0] if assets else None
 
 
@@ -856,6 +868,67 @@ def _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0):
             return asset
 
         time.sleep(poll_interval_s)
+
+
+def _looks_like_offer_text(ocr_text):
+    text = "%s" % (ocr_text or "")
+    lowered = text.lower()
+    has_price = bool(re.search(r"(?:£|\$|\€)\s*\d", text))
+    has_rating = bool(re.search(r"\b[345]\.\d{1,2}\b", text))
+    has_minutes = len(re.findall(r"\b\d+(?:[.,]\d+)?\s*mins?\b", lowered)) >= 2
+    has_miles = len(re.findall(r"\b\d+(?:[.,]\d+)?\s*(?:mi|miles?|ml)\b", lowered)) >= 2
+    has_offer_keywords = any(
+        token in lowered for token in ["holiday entitlement", "holiday pay", "exclusive", "confirm", "comfort", "uberx", "electric"]
+    )
+    return (has_price and has_minutes and has_miles) or (has_price and has_rating and has_offer_keywords)
+
+
+def _offer_text_score(ocr_text):
+    text = "%s" % (ocr_text or "")
+    lowered = text.lower()
+    score = 0
+    if re.search(r"(?:£|\$|\€)\s*\d", text):
+        score += 5
+    score += min(4, len(re.findall(r"\b\d+(?:[.,]\d+)?\s*mins?\b", lowered)))
+    score += min(4, len(re.findall(r"\b\d+(?:[.,]\d+)?\s*(?:mi|miles?|ml)\b", lowered)))
+    if re.search(r"\b[345]\.\d{1,2}\b", text):
+        score += 2
+    for token in ["holiday entitlement", "holiday pay", "exclusive", "confirm", "comfort", "uberx", "electric"]:
+        if token in lowered:
+            score += 1
+    if _looks_like_navigation_map(text):
+        score -= 4
+    return score
+
+
+def _select_best_recent_offer_asset(state, limit=RECENT_ASSET_SCAN_LIMIT):
+    candidates = _recent_assets(limit)
+    candidates.reverse()
+    best = None
+    best_score = None
+    best_bundle = None
+
+    for asset in candidates:
+        if _is_same_as_previous(asset, state):
+            continue
+        try:
+            ui_image = asset.get_ui_image()
+            objc_image = ObjCInstance(ui_image)
+            cgimage = objc_image.CGImage()
+            ocr_bundle = _run_offer_focused_ocr(cgimage)
+            score = _offer_text_score(ocr_bundle["combined_text"])
+        except Exception:
+            continue
+
+        if best is None or score > best_score:
+            best = asset
+            best_score = score
+            best_bundle = ocr_bundle
+
+        if _looks_like_offer_text(ocr_bundle["combined_text"]):
+            return asset, ocr_bundle, score
+
+    return best, best_bundle, best_score
 
 
 def _run_ocr_from_cgimage(cgimage, region_of_interest=None):
@@ -1297,7 +1370,8 @@ def main():
     state = _load_state()
 
     fetch_started = time.perf_counter()
-    latest_asset = _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0)
+    _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0)
+    latest_asset, preselected_ocr_bundle, preselected_score = _select_best_recent_offer_asset(state)
     fetch_finished = time.perf_counter()
 
     if latest_asset is None:
@@ -1317,7 +1391,8 @@ def main():
     ocr_time = 0.0
     parse_result = None
     for _attempt in range(1, MAX_OCR_RETRIES + 1):
-        ocr_bundle = _run_offer_focused_ocr(cgimage)
+        ocr_bundle = preselected_ocr_bundle or _run_offer_focused_ocr(cgimage)
+        preselected_ocr_bundle = None
         ocr_text = ocr_bundle["combined_text"]
         ocr_time = ocr_bundle["total_time"]
         parse_result = parse_ocr_text(ocr_text)
@@ -1342,6 +1417,7 @@ def main():
             "reason": parse_reason,
             "ocr_text": ocr_text,
             "ocr_seconds": round(ocr_time, 4),
+            "asset_offer_score": preselected_score,
         }
         _write_json(LATEST_JSON_PATH, latest_payload)
         _send_push_notification(
