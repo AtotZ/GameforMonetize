@@ -770,6 +770,8 @@ LEDGER_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local.jsonl")
 LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-Local-latest.json")
 SHORTCUT_INPUT_PATH = os.path.join(ROOT_DIR, "shortcut_offer_text.txt")
 SHORTCUT_INPUT_FALLBACK_PATH = os.path.expanduser("~/shortcut_offer_text.txt")
+SHORTCUT_INPUT_WAIT_SECONDS = 1.2
+SHORTCUT_INPUT_POLL_SECONDS = 0.08
 
 GOOD_HOURLY_MIN = 28.0
 BAD_HOURLY_MAX = 22.0
@@ -1742,23 +1744,27 @@ def _looks_like_offer_text(text):
 
 
 def _consume_shortcut_offer_text_file():
-    try:
-        for path in (SHORTCUT_INPUT_PATH, SHORTCUT_INPUT_FALLBACK_PATH):
-            if not os.path.exists(path):
-                continue
-            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
-                text = handle.read().strip()
-            if not _looks_like_offer_text(text):
-                continue
-            try:
-                with open(path, "w", encoding="utf-8") as handle:
-                    handle.write("")
-            except Exception:
-                pass
-            return text
-        return ""
-    except Exception:
-        return ""
+    deadline = time.perf_counter() + SHORTCUT_INPUT_WAIT_SECONDS
+    while True:
+        try:
+            for path in (SHORTCUT_INPUT_PATH, SHORTCUT_INPUT_FALLBACK_PATH):
+                if not os.path.exists(path):
+                    continue
+                with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                    text = handle.read().strip()
+                if not _looks_like_offer_text(text):
+                    continue
+                try:
+                    with open(path, "w", encoding="utf-8") as handle:
+                        handle.write("")
+                except Exception:
+                    pass
+                return text
+        except Exception:
+            pass
+        if time.perf_counter() >= deadline:
+            return ""
+        time.sleep(SHORTCUT_INPUT_POLL_SECONDS)
 
 
 def _read_shortcut_offer_input():
