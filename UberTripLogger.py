@@ -759,6 +759,7 @@ if True:
             },
         }
 
+SCRIPT_BUILD = "2026-06-21-292604c"
 
 t_global_start = time.perf_counter()
 print("[T0] Entered Pythonista at %s | build=%s" % (time.strftime("%H:%M:%S"), SCRIPT_BUILD))
@@ -786,7 +787,6 @@ SHORTCUT_INPUT_PATH = os.path.join(ROOT_DIR, "shortcut_offer_text.txt")
 SHORTCUT_INPUT_FALLBACK_PATH = os.path.expanduser("~/shortcut_offer_text.txt")
 SHORTCUT_INPUT_WAIT_SECONDS = 1.2
 SHORTCUT_INPUT_POLL_SECONDS = 0.08
-SCRIPT_BUILD = "2026-06-21-292604c"
 
 GOOD_HOURLY_MIN = 28.0
 BAD_HOURLY_MAX = 22.0
