@@ -95,6 +95,14 @@ except ModuleNotFoundError:
         "multiple stop",
         "accept",
     ]
+    NOTIFICATION_LINE_PATTERNS = [
+        re.compile(r"triplogger\s+parse\s+alert", re.IGNORECASE),
+        re.compile(r"parse_incomplete:", re.IGNORECASE),
+        re.compile(r"ocr\s+ran,\s+but\s+required\s+trip\s+fields\s+were\s+missing", re.IGNORECASE),
+        re.compile(r"\breal\s+price\b.*\/min", re.IGNORECASE),
+        re.compile(r"\brsp1\b.*\/min", re.IGNORECASE),
+        re.compile(r"[\u2b50\U0001f4b0\U0001f3af*].*\/m\b", re.IGNORECASE),
+    ]
     VEHICLE_TYPE_PATTERNS = [
         ("Business Comfort Electric", re.compile(r"\bbusiness\s*comfort\s*electric\b", re.IGNORECASE)),
         ("Business Comfort", re.compile(r"\bbusiness\s*comfort\b", re.IGNORECASE)),
@@ -176,7 +184,16 @@ except ModuleNotFoundError:
             lambda match: match.group(1).replace("I", "1").replace("|", "1").replace("l", "1"),
             text,
         )
-        return text.strip()
+        lines = []
+        for raw_line in text.split("\n"):
+            line = raw_line.strip()
+            if not line:
+                lines.append("")
+                continue
+            if any(pattern.search(line) for pattern in NOTIFICATION_LINE_PATTERNS):
+                continue
+            lines.append(raw_line)
+        return "\n".join(lines).strip()
 
     def _parse_money(raw):
         if not raw:
