@@ -8,7 +8,7 @@ import time
 import webbrowser
 
 import photos
-from objc_util import CGRect, ObjCClass, ObjCInstance
+from objc_util import CGRect, ObjCClass, ObjCInstance, on_main_thread
 try:
     import clipboard
 except Exception:
@@ -764,7 +764,12 @@ SCRIPT_BUILD = "2026-06-21-292604c"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
-print("[T0] Entered Pythonista at %s | build=%s" % (time.strftime("%H:%M:%S"), SCRIPT_BUILD))
+RUNTIME_STDOUT_ENABLED = False
+
+
+def _runtime_print(message):
+    if RUNTIME_STDOUT_ENABLED:
+        print(message)
 
 
 def _safe_script_dir():
@@ -857,11 +862,23 @@ def _append_jsonl(path, payload):
         _maybe_fsync(handle)
 
 
-def _send_push_notification(title, body):
+@on_main_thread
+def _open_uber_driver_app():
     try:
-        webbrowser.open("uberdriver://")
-    except Exception as exc:
-        print("Warning: could not open Uber via URL scheme: %s" % exc)
+        UIApplication = ObjCClass("UIApplication")
+        NSURL = ObjCClass("NSURL")
+        app = UIApplication.sharedApplication()
+        url = NSURL.URLWithString_("uberdriver://")
+        if app and url:
+            app.openURL_(url)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _send_push_notification(title, body):
+    _open_uber_driver_app()
 
     UNUserNotificationCenter = ObjCClass("UNUserNotificationCenter")
     UNMutableNotificationContent = ObjCClass("UNMutableNotificationContent")
@@ -926,7 +943,7 @@ def _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0):
     while True:
         attempt += 1
         if (time.perf_counter() - start_wait) > timeout_s:
-            print("[guard] Photo guard timed out waiting for a new image asset.")
+            _runtime_print("[guard] Photo guard timed out waiting for a new image asset.")
             return None
 
         asset = _latest_asset()
@@ -939,10 +956,9 @@ def _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0):
         asset_id = getattr(asset, "local_id", None)
 
         if not _is_same_as_previous(asset, state):
-            print(
+            _runtime_print(
                 "[guard] Fresh asset detected on attempt %d | id=%s | created=%s"
                 % (attempt, asset_id, created_s),
-                flush=True,
             )
             return asset
 
@@ -1556,8 +1572,11 @@ def _build_log_block(now_str, trip_label, ocr_time, parse_result, metrics, ocr_t
 
 
 def main():
+    global RUNTIME_STDOUT_ENABLED
     state = _load_state()
     shortcut_offer_text, shortcut_input_mode, shortcut_source = _read_shortcut_offer_input()
+    RUNTIME_STDOUT_ENABLED = shortcut_input_mode != "argv"
+    _runtime_print("[T0] Entered Pythonista at %s | build=%s" % (time.strftime("%H:%M:%S"), SCRIPT_BUILD))
     latest_asset = None
     selected_asset_id = None
     selected_asset_created = None
@@ -1571,7 +1590,7 @@ def main():
 
     if shortcut_offer_text:
         if shortcut_input_mode == "argv":
-            print(
+            _runtime_print(
                 "[input] Using Shortcut-extracted text from arguments (%s, %s bytes)."
                 % (
                     shortcut_source.get("tag") or "ARGV",
@@ -1579,7 +1598,7 @@ def main():
                 )
             )
         elif shortcut_input_mode == "file":
-            print(
+            _runtime_print(
                 "[input] Using Shortcut-extracted text from file (%s, %s bytes)."
                 % (
                     shortcut_source.get("tag") or "FILE",
@@ -1587,7 +1606,7 @@ def main():
                 )
             )
         else:
-            print("[input] Using Shortcut-extracted text from fallback input.")
+            _runtime_print("[input] Using Shortcut-extracted text from fallback input.")
         try:
             _write_text(DEBUG_SHORTCUT_DUMP_PATH, shortcut_offer_text)
         except Exception:
@@ -1600,7 +1619,7 @@ def main():
         fetch_finished = time.perf_counter()
 
         if latest_asset is None:
-            print("[guard] Aborting. Photo guard timed out (no new photo registered).")
+            _runtime_print("[guard] Aborting. Photo guard timed out (no new photo registered).")
             _send_push_notification(
                 "TripLogger Alert %s" % SCRIPT_BUILD_TAG,
                 "No Shortcut text file and no usable new image were available. Try the scan again.",
@@ -1636,20 +1655,20 @@ def main():
                 break
             time.sleep(0.05)
     if parse_result and parse_result["valid"] and shortcut_offer_text:
-        print("[input] Parsed Shortcut text successfully.")
+        _runtime_print("[input] Parsed Shortcut text successfully.")
     elif parse_result and parse_result["valid"]:
-        print("[input] Parsed selected photo asset successfully.")
+        _runtime_print("[input] Parsed selected photo asset successfully.")
     if not shortcut_offer_text:
         selected_asset_id = getattr(latest_asset, "local_id", None) if latest_asset else None
         selected_asset_created = _created_str(getattr(latest_asset, "creation_date", None)) if latest_asset else None
 
     if not parse_result or not parse_result["valid"]:
         if _looks_like_navigation_map(ocr_text):
-            print("[guard] Active navigation map detected. Exiting silently.")
+            _runtime_print("[guard] Active navigation map detected. Exiting silently.")
             raise SystemExit(0)
 
         if shortcut_offer_text and _looks_like_self_notification_capture(ocr_text):
-            print("[guard] Captured TripLogger notification text instead of an offer; exiting silently.")
+            _runtime_print("[guard] Captured TripLogger notification text instead of an offer; exiting silently.")
             latest_payload = {
                 "ok": False,
                 "reason": "self_notification_capture",
@@ -1686,14 +1705,14 @@ def main():
         )
         raise SystemExit(0)
 
-    print("[Asset fetch time] %.3f seconds" % (fetch_finished - fetch_started))
-    print("[Image convert time] %.3f seconds" % (convert_finished - fetch_finished))
-    print("[OCR Scan Time] %.3f seconds" % ocr_time)
+    _runtime_print("[Asset fetch time] %.3f seconds" % (fetch_finished - fetch_started))
+    _runtime_print("[Image convert time] %.3f seconds" % (convert_finished - fetch_finished))
+    _runtime_print("[OCR Scan Time] %.3f seconds" % ocr_time)
 
     ocr_sha1 = hashlib.sha1(ocr_text.encode("utf-8", errors="ignore")).hexdigest()
     previous_ocr_sha1 = state.get("last_ocr_sha1")
     if previous_ocr_sha1 and ocr_sha1 == previous_ocr_sha1:
-        print("[guard] Duplicate OCR text detected; skipping write/notify.")
+        _runtime_print("[guard] Duplicate OCR text detected; skipping write/notify.")
         raise SystemExit(0)
 
     parsed = dict(parse_result["parsed"] or {})
@@ -1826,15 +1845,11 @@ def main():
             metrics["per_min_card"],
             metrics["per_mile_card"],
         )
-        body_line3 = "SRC %s %sB" % (
-            shortcut_source.get("tag") or "PHOTO",
-            shortcut_source.get("bytes") or 0,
-        )
-        body_text = "%s\n%s\n%s" % (body_line1, body_line2, body_line3)
+        body_text = "%s\n%s" % (body_line1, body_line2)
     _send_push_notification(title_line, body_text)
 
     t_global_end = time.perf_counter()
-    print("[T1] Leaving Pythonista at %s (Exec time: %.3fs)" % (
+    _runtime_print("[T1] Leaving Pythonista at %s (Exec time: %.3fs)" % (
         time.strftime("%H:%M:%S"),
         t_global_end - t_global_start,
     ))
