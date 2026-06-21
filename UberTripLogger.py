@@ -510,6 +510,27 @@ except ModuleNotFoundError:
         matched = bool(RESERVED_TRIP_RE.search("%s" % (text or "")))
         return {"value": matched, "source": "pattern_match" if matched else "none"}
 
+    def _isolate_offer_block(text):
+        lines = [line for line in ("%s" % (text or "")).split("\n")]
+        if not lines:
+            return ""
+        start_index = 0
+        for index, raw_line in enumerate(lines):
+            line = ("%s" % (raw_line or "")).strip()
+            if not line:
+                continue
+            if any(pattern.search(line) for _, pattern in VEHICLE_TYPE_PATTERNS):
+                start_index = index
+                break
+        end_index = len(lines)
+        for index in range(start_index, len(lines)):
+            line = ("%s" % (lines[index] or "")).strip()
+            if re.search(r"\bconfirm\b", line, re.IGNORECASE):
+                end_index = index + 1
+                break
+        isolated = "\n".join(lines[start_index:end_index]).strip()
+        return isolated or ("%s" % (text or "")).strip()
+
     def _truncate_at_terminal(raw_line):
         if not raw_line:
             return ""
@@ -663,7 +684,7 @@ except ModuleNotFoundError:
         return None if not missing else "parse_incomplete:%s" % ",".join(missing)
 
     def parse_ocr_text(ocr_text):
-        text = _normalize_offer_text(ocr_text)
+        text = _isolate_offer_block(_normalize_offer_text(ocr_text))
         lines = text.split("\n")
         price_info = _select_price(text)
         rating_info = _extract_rating(text)
