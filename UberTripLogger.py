@@ -1271,7 +1271,7 @@ def _build_local_target_insight(today_total_gbp, drive_minutes, offer_per_min_ad
         forecast_target_feasible = forecast_eta_minutes <= uber_remaining_minutes
     else:
         forecast_target_feasible = None
-    compare_rate = required_per_min if required_per_min > 0 else baseline_target_per_min
+    compare_rate = baseline_target_per_min
     delta_per_min = round(float(offer_per_min_adj_gbp or 0.0) - compare_rate, 2)
     return {
         "enabled": True,
