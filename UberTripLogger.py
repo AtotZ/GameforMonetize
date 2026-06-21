@@ -1793,10 +1793,10 @@ def _looks_like_offer_text(text):
 
 def _shortcut_source_tag(path):
     normalized = os.path.normpath(path or "")
+    if normalized == os.path.normpath(SHORTCUT_INPUT_SCRIPT_DIR_PATH):
+        return os.path.basename(os.path.normpath(SCRIPT_DIR)).upper() or "PYSCRIPT"
     if normalized == os.path.normpath(SHORTCUT_INPUT_PATH):
         return "PYDOC"
-    if normalized == os.path.normpath(SHORTCUT_INPUT_SCRIPT_DIR_PATH):
-        return "PYSCRIPT"
     if normalized == os.path.normpath(SHORTCUT_INPUT_FALLBACK_PATH):
         return "PYROOT"
     return "FILE"
@@ -1806,8 +1806,8 @@ def _shortcut_input_candidates():
     ordered = []
     seen = set()
     for path in (
-        SHORTCUT_INPUT_PATH,
         SHORTCUT_INPUT_SCRIPT_DIR_PATH,
+        SHORTCUT_INPUT_PATH,
         SHORTCUT_INPUT_FALLBACK_PATH,
     ):
         normalized = os.path.normpath(path)
