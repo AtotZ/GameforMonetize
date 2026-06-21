@@ -1684,9 +1684,6 @@ def _read_shortcut_offer_input():
     file_text = _consume_shortcut_offer_text_file()
     if file_text:
         return file_text, "file"
-    clipboard_text = _read_shortcut_offer_text()
-    if clipboard_text:
-        return clipboard_text, "clipboard"
     return "", ""
 
 
