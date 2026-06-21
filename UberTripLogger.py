@@ -174,6 +174,11 @@ if True:
             text,
         )
         text = re.sub(
+            r"(^|\n)(\s*[•\-\+\*]?\s*)\?(?=\s*\d{1,3}(?:[.,]\d{1,2})\b)",
+            lambda match: "%s%s%s" % (match.group(1), match.group(2), POUND),
+            text,
+        )
+        text = re.sub(
             r"(^|\n)(\s*[<\u2039]?\s*)[I|l](?=\s*mins?\b)",
             lambda match: "%s%s1" % (match.group(1), match.group(2)),
             text,
@@ -647,6 +652,14 @@ if True:
             source = lines[index].strip()
             if not source:
                 break
+            if not parts:
+                inline_time_match = MIN_TIME_ONLY_RE.search(source)
+                if inline_time_match and inline_time_match.start() > 0:
+                    prefix = source[: inline_time_match.start()].strip(" ,.;-")
+                    cleaned_prefix = _fix_postcode_ocr(_clean_address_line(prefix))
+                    if cleaned_prefix and _is_likely_address_line(cleaned_prefix):
+                        parts.append(cleaned_prefix)
+                        break
             if not _is_likely_address_line(source):
                 if parts:
                     stitched = _stitch_partial_uk_postcode(parts[-1], source)
