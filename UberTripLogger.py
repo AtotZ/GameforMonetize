@@ -760,6 +760,7 @@ if True:
         }
 
 SCRIPT_BUILD = "2026-06-21-292604c"
+SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
 print("[T0] Entered Pythonista at %s | build=%s" % (time.strftime("%H:%M:%S"), SCRIPT_BUILD))
@@ -1538,7 +1539,7 @@ def main():
         if latest_asset is None:
             print("[guard] Aborting. Photo guard timed out (no new photo registered).")
             _send_push_notification(
-                "TripLogger Alert",
+                "TripLogger Alert %s" % SCRIPT_BUILD_TAG,
                 "No Shortcut text file and no usable new image were available. Try the scan again.",
             )
             raise SystemExit(0)
@@ -1607,7 +1608,7 @@ def main():
         }
         _write_json(LATEST_JSON_PATH, latest_payload)
         _send_push_notification(
-            "TripLogger Parse Alert",
+            "TripLogger Parse Alert %s" % SCRIPT_BUILD_TAG,
             "%s | %s" % (parse_reason, ocr_preview),
         )
         raise SystemExit(0)
