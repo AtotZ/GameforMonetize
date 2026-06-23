@@ -1,5 +1,5 @@
 import datetime
-# version: 2026-06-23-updater-selfupdate-v1
+# version: 2026-06-23-updater-selfupdate-v2
 import json
 import os
 import time

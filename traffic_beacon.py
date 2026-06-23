@@ -1,4 +1,4 @@
-# version: 2026-06-23-traffic-beacon-db-v1
+# version: 2026-06-23-traffic-beacon-db-v3
 import datetime
 import json
 import os
@@ -13,11 +13,14 @@ except Exception:
 
 
 ROOT_DIR = os.path.expanduser("~/Documents")
-LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-latest.json")
-HISTORY_JSON_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-history.json")
-DB_JSON_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-db.json")
-ACTIVE_OFFER_JSON_PATH = os.path.join(ROOT_DIR, "active_offer.json")
-ROUTE_DB_JSON_PATH = os.path.join(ROOT_DIR, "TrafficRoute-db.json")
+DATA_ROOT_DIR = os.path.join(ROOT_DIR, "TestSubjextData")
+TRAFFIC_DATA_DIR = os.path.join(DATA_ROOT_DIR, "traffic")
+OFFERS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "offers")
+LATEST_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-latest.json")
+HISTORY_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-history.json")
+DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
+ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
+ROUTE_DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
 MAX_HISTORY_ITEMS = 2000
 ACTIVE_OFFER_MAX_AGE_SECONDS = 6 * 60 * 60
 
@@ -66,6 +69,9 @@ def _load_history():
 
 
 def _write_json(path, payload):
+    directory = os.path.dirname(path)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 

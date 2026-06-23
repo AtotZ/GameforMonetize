@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v1
+# version: 2026-06-23-postcode-isolation-trapdb-v2
 import hashlib
 import json
 import os
@@ -893,12 +893,17 @@ def _safe_script_dir():
 SCRIPT_DIR = _safe_script_dir()
 STATE_PATH = os.path.join(SCRIPT_DIR, ".uber_triplogger_postcode_isolation_state.json")
 ROOT_DIR = os.path.expanduser("~/Documents")
-TRAFFIC_BEACON_DB_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-db.json")
-ACTIVE_OFFER_JSON_PATH = os.path.join(ROOT_DIR, "active_offer.json")
-TEXT_LOG_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
-LEDGER_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
-LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation-latest.json")
-DEBUG_SHORTCUT_DUMP_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation-shortcut-input.txt")
+DATA_ROOT_DIR = os.path.join(ROOT_DIR, "TestSubjextData")
+TRAFFIC_DATA_DIR = os.path.join(DATA_ROOT_DIR, "traffic")
+OFFERS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "offers")
+LOGS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "logs")
+DEBUG_DATA_DIR = os.path.join(DATA_ROOT_DIR, "debug")
+TRAFFIC_BEACON_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
+ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
+TEXT_LOG_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
+LEDGER_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
+LATEST_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation-latest.json")
+DEBUG_SHORTCUT_DUMP_PATH = os.path.join(DEBUG_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation-shortcut-input.txt")
 SHORTCUT_INPUT_PATH = os.path.join(ROOT_DIR, "shortcut_offer_text.txt")
 SHORTCUT_INPUT_SCRIPT_DIR_PATH = os.path.join(SCRIPT_DIR, "shortcut_offer_text.txt")
 SHORTCUT_INPUT_SCRIPT_DIR_NESTED_PATH = os.path.join(
@@ -949,11 +954,17 @@ def _save_state(payload):
 
 
 def _write_json(path, payload):
+    directory = os.path.dirname(path)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
 def _write_text(path, text):
+    directory = os.path.dirname(path)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("%s" % (text or ""))
 
@@ -966,6 +977,9 @@ def _maybe_fsync(handle):
 
 
 def _append_jsonl(path, payload):
+    directory = os.path.dirname(path)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         _maybe_fsync(handle)
