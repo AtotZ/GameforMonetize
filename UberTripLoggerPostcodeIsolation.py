@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v2
+# version: 2026-06-23-postcode-isolation-trapdb-v3
 import hashlib
 import json
 import os
@@ -953,18 +953,20 @@ def _save_state(payload):
         pass
 
 
-def _write_json(path, payload):
+def _ensure_parent_dir(path):
     directory = os.path.dirname(path)
     if directory and not os.path.exists(directory):
         os.makedirs(directory)
+
+
+def _write_json(path, payload):
+    _ensure_parent_dir(path)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
 def _write_text(path, text):
-    directory = os.path.dirname(path)
-    if directory and not os.path.exists(directory):
-        os.makedirs(directory)
+    _ensure_parent_dir(path)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("%s" % (text or ""))
 
@@ -977,11 +979,16 @@ def _maybe_fsync(handle):
 
 
 def _append_jsonl(path, payload):
-    directory = os.path.dirname(path)
-    if directory and not os.path.exists(directory):
-        os.makedirs(directory)
+    _ensure_parent_dir(path)
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        _maybe_fsync(handle)
+
+
+def _append_text(path, text):
+    _ensure_parent_dir(path)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write("%s" % (text or ""))
         _maybe_fsync(handle)
 
 
@@ -2252,9 +2259,7 @@ def main():
     if totals_before_append["trip_count"] == 0:
         block = "\n%s%s" % (heading, block)
 
-    with open(TEXT_LOG_PATH, "a", encoding="utf-8") as handle:
-        handle.write(block)
-        _maybe_fsync(handle)
+    _append_text(TEXT_LOG_PATH, block)
 
     _append_jsonl(LEDGER_PATH, ledger_record)
     totals_after_append = _totals_after_append(totals_before_append, ledger_record)
