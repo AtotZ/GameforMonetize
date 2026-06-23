@@ -5,7 +5,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-23-updater-v1"
+SCRIPT_BUILD = "2026-06-23-updater-v2"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 
@@ -34,6 +34,11 @@ FILE_MAP = [
         "label": "traffic_beacon",
         "remote_name": "traffic_beacon.py",
         "local_name": "traffic_beacon.py",
+    },
+    {
+        "label": "update_from_github",
+        "remote_name": "update_from_github.py",
+        "local_name": "update_from_github.py",
     },
 ]
 
