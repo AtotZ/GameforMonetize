@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v5
+# version: 2026-06-23-postcode-isolation-trapdb-v6
 import hashlib
 import json
 import os
@@ -900,6 +900,7 @@ LOGS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "logs")
 DEBUG_DATA_DIR = os.path.join(DATA_ROOT_DIR, "debug")
 TRAFFIC_BEACON_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
 ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
+OFFERS_HISTORY_JSONL_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer_history.jsonl")
 TEXT_LOG_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
 LEDGER_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
 LATEST_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation-latest.json")
@@ -992,7 +993,7 @@ def _append_text(path, text):
         _maybe_fsync(handle)
 
 
-def _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_str):
+def _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_str, ocr_sha1):
     payload = {
         "timestamp": now_str,
         "pickup_address": parsed.get("pickup_address") or "",
@@ -1016,9 +1017,16 @@ def _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_s
         "traffic_zone_source": traffic_verdict.get("source") or "",
         "per_min_adj": float(metrics.get("per_min_adj") or 0.0),
         "per_mile_including_pickup": float(metrics.get("per_mile_including_pickup") or 0.0),
+        "fare_for_metrics": float(metrics.get("fare_for_metrics") or 0.0),
+        "hourly_adj": float(metrics.get("hourly_adj") or 0.0),
+        "pay_status": metrics.get("pay_status") or "",
+        "ccz_bonus_applied": bool(metrics.get("ccz_bonus_applied")),
+        "is_reserved": bool(parsed.get("is_reserved")),
         "shortcut_source_tag": shortcut_source.get("tag") or "",
+        "ocr_sha1": ocr_sha1 or "",
     }
     _write_json(ACTIVE_OFFER_JSON_PATH, payload)
+    _append_jsonl(OFFERS_HISTORY_JSONL_PATH, payload)
     return payload
 
 
@@ -2260,7 +2268,14 @@ def main():
     target_total_gbp = summary_total if summary_total is not None else totals_before_append["total_price"]
     target_drive_minutes = summary_drive_minutes if summary_drive_minutes is not None else totals_before_append["drive_minutes"]
     target_insight = _build_local_target_insight(target_total_gbp, target_drive_minutes, metrics["per_min_adj"])
-    active_offer_payload = _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_str)
+    active_offer_payload = _write_active_offer(
+        parsed,
+        metrics,
+        traffic_verdict,
+        shortcut_source,
+        now_str,
+        ocr_sha1,
+    )
 
     block = _build_log_block(
         now_str,
