@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v9
+# version: 2026-06-23-postcode-isolation-trapdb-v10
 import hashlib
 import json
 import os
@@ -2498,8 +2498,8 @@ def main():
             LOW_RATING_DECLINE_THRESHOLD,
         )
     else:
-        traffic_compact = "%s %s" % (traffic_verdict["emoji"], traffic_verdict["label"])
-        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s | %s" % (
+        traffic_compact = "%s [%s]" % (traffic_verdict["emoji"], traffic_verdict["label"])
+        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s · %s" % (
             parsed["rating"] if parsed["rating"] else 0.0,
             parsed["price"],
             traffic_compact,
