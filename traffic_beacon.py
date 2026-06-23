@@ -16,7 +16,10 @@ ROOT_DIR = os.path.expanduser("~/Documents")
 LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-latest.json")
 HISTORY_JSON_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-history.json")
 DB_JSON_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-db.json")
+ACTIVE_OFFER_JSON_PATH = os.path.join(ROOT_DIR, "active_offer.json")
+ROUTE_DB_JSON_PATH = os.path.join(ROOT_DIR, "TrafficRoute-db.json")
 MAX_HISTORY_ITEMS = 2000
+ACTIVE_OFFER_MAX_AGE_SECONDS = 6 * 60 * 60
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
@@ -65,6 +68,17 @@ def _load_history():
 def _write_json(path, payload):
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def _load_json_dict(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
 
 
 def _append_history(entry):
@@ -172,6 +186,85 @@ def _build_beacon_db(history):
     return db
 
 
+def _parse_timestamp(value):
+    try:
+        return datetime.datetime.strptime("%s" % (value or ""), "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _load_active_offer():
+    payload = _load_json_dict(ACTIVE_OFFER_JSON_PATH)
+    if not payload:
+        return {}
+    offer_ts = _parse_timestamp(payload.get("timestamp"))
+    if not offer_ts:
+        return {}
+    age_seconds = abs((datetime.datetime.now() - offer_ts).total_seconds())
+    if age_seconds > ACTIVE_OFFER_MAX_AGE_SECONDS:
+        return {}
+    return payload
+
+
+def _route_key(active_offer):
+    pickup = ("%s" % (active_offer.get("pickup_outcode") or "UNK")).upper()
+    dropoff = ("%s" % (active_offer.get("dropoff_outcode") or "UNK")).upper()
+    return "%s->%s" % (pickup, dropoff)
+
+
+def _route_bucket(active_offer):
+    return {
+        "pickup_outcode": ("%s" % (active_offer.get("pickup_outcode") or "")).upper(),
+        "dropoff_outcode": ("%s" % (active_offer.get("dropoff_outcode") or "")).upper(),
+        "pickup_sector": ("%s" % (active_offer.get("pickup_sector") or "")).upper(),
+        "dropoff_sector": ("%s" % (active_offer.get("dropoff_sector") or "")).upper(),
+        "pickup_postcode": ("%s" % (active_offer.get("pickup_postcode") or "")).upper(),
+        "dropoff_postcode": ("%s" % (active_offer.get("dropoff_postcode") or "")).upper(),
+        "traffic_count": 0,
+        "no_traffic_count": 0,
+        "net_score": 0,
+        "last_seen": "",
+        "last_offer_timestamp": active_offer.get("timestamp") or "",
+        "samples": 0,
+        "beacon_outcodes": {},
+        "beacon_sectors": {},
+    }
+
+
+def _update_route_db(active_offer, beacon_payload):
+    if not active_offer:
+        return {}
+    route_db = _load_json_dict(ROUTE_DB_JSON_PATH)
+    routes = route_db.setdefault("routes", {})
+    route_db["updated_at"] = _timestamp()
+    route_db["active_offer_max_age_seconds"] = ACTIVE_OFFER_MAX_AGE_SECONDS
+    route_key = _route_key(active_offer)
+    bucket = routes.setdefault(route_key, _route_bucket(active_offer))
+
+    status = ("%s" % (beacon_payload.get("status") or "")).strip().lower()
+    beacon_outcode = ("%s" % (beacon_payload.get("outcode") or "")).upper()
+    beacon_sector = ("%s" % (beacon_payload.get("sector") or "")).upper()
+    if status == "traffic":
+        bucket["traffic_count"] = int(bucket.get("traffic_count") or 0) + 1
+    else:
+        bucket["no_traffic_count"] = int(bucket.get("no_traffic_count") or 0) + 1
+    bucket["net_score"] = int(bucket.get("traffic_count") or 0) - int(bucket.get("no_traffic_count") or 0)
+    bucket["samples"] = int(bucket.get("samples") or 0) + 1
+    bucket["last_seen"] = beacon_payload.get("timestamp") or bucket.get("last_seen") or ""
+    bucket["last_offer_timestamp"] = active_offer.get("timestamp") or bucket.get("last_offer_timestamp") or ""
+    if beacon_outcode:
+        bucket["beacon_outcodes"][beacon_outcode] = int(bucket["beacon_outcodes"].get(beacon_outcode) or 0) + 1
+    if beacon_sector:
+        bucket["beacon_sectors"][beacon_sector] = int(bucket["beacon_sectors"].get(beacon_sector) or 0) + 1
+    route_db["total_routes"] = len(routes)
+    _write_json(ROUTE_DB_JSON_PATH, route_db)
+    return {
+        "route_key": route_key,
+        "samples": bucket["samples"],
+        "net_score": bucket["net_score"],
+    }
+
+
 def _get_location_snapshot():
     if location is None:
         raise RuntimeError("Pythonista location module is unavailable.")
@@ -262,13 +355,16 @@ def main():
     history = _append_history(payload)
     beacon_db = _build_beacon_db(history)
     _write_json(DB_JSON_PATH, beacon_db)
+    active_offer = _load_active_offer()
+    route_stats = _update_route_db(active_offer, payload) if active_offer else {}
     elapsed = time.perf_counter() - started
     print(
-        "[traffic_beacon] saved traffic | %s | %s | db=%s | %.3fs"
+        "[traffic_beacon] saved traffic | %s | %s | db=%s | route=%s | %.3fs"
         % (
             payload.get("postcode") or "no_postcode",
             payload.get("timestamp") or "",
             beacon_db.get("total_entries") or 0,
+            route_stats.get("route_key") or "none",
             elapsed,
         )
     )

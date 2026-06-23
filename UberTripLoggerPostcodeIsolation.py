@@ -894,6 +894,7 @@ SCRIPT_DIR = _safe_script_dir()
 STATE_PATH = os.path.join(SCRIPT_DIR, ".uber_triplogger_postcode_isolation_state.json")
 ROOT_DIR = os.path.expanduser("~/Documents")
 TRAFFIC_BEACON_DB_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-db.json")
+ACTIVE_OFFER_JSON_PATH = os.path.join(ROOT_DIR, "active_offer.json")
 TEXT_LOG_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
 LEDGER_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
 LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation-latest.json")
@@ -968,6 +969,36 @@ def _append_jsonl(path, payload):
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         _maybe_fsync(handle)
+
+
+def _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_str):
+    payload = {
+        "timestamp": now_str,
+        "pickup_address": parsed.get("pickup_address") or "",
+        "dropoff_address": parsed.get("dropoff_address") or "",
+        "pickup_postcode": parsed.get("pickup_postcode") or "",
+        "dropoff_postcode": parsed.get("dropoff_postcode") or "",
+        "pickup_outcode": parsed.get("pickup_outcode") or "",
+        "dropoff_outcode": parsed.get("dropoff_outcode") or "",
+        "pickup_sector": parsed.get("pickup_sector") or "",
+        "dropoff_sector": parsed.get("dropoff_sector") or "",
+        "pickup_min": float(parsed.get("pickup_min") or 0.0),
+        "pickup_miles": float(parsed.get("pickup_miles") or 0.0),
+        "trip_min": float(parsed.get("trip_min") or 0.0),
+        "trip_miles": float(parsed.get("trip_miles") or 0.0),
+        "price": float(parsed.get("price") or 0.0),
+        "rating": float(parsed.get("rating") or 0.0),
+        "vehicle_type": parsed.get("vehicle_type") or "",
+        "traffic_zone_status": traffic_verdict.get("status") or "",
+        "traffic_zone_label": traffic_verdict.get("label") or "",
+        "traffic_zone_reason": traffic_verdict.get("reason") or "",
+        "traffic_zone_source": traffic_verdict.get("source") or "",
+        "per_min_adj": float(metrics.get("per_min_adj") or 0.0),
+        "per_mile_including_pickup": float(metrics.get("per_mile_including_pickup") or 0.0),
+        "shortcut_source_tag": shortcut_source.get("tag") or "",
+    }
+    _write_json(ACTIVE_OFFER_JSON_PATH, payload)
+    return payload
 
 
 @on_main_thread
@@ -2192,6 +2223,7 @@ def main():
     target_total_gbp = summary_total if summary_total is not None else totals_before_append["total_price"]
     target_drive_minutes = summary_drive_minutes if summary_drive_minutes is not None else totals_before_append["drive_minutes"]
     target_insight = _build_local_target_insight(target_total_gbp, target_drive_minutes, metrics["per_min_adj"])
+    active_offer_payload = _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_str)
 
     block = _build_log_block(
         now_str,
@@ -2231,6 +2263,7 @@ def main():
         "today_totals": totals_after_append,
         "target_progress_local": target_insight,
         "traffic_verdict": traffic_verdict,
+        "active_offer": active_offer_payload,
         "low_rating_decision": low_rating_decision,
     }
     _write_json(LATEST_JSON_PATH, latest_payload)
