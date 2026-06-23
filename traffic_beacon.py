@@ -2,6 +2,7 @@ import datetime
 import json
 import os
 import re
+import sys
 import time
 
 try:
@@ -13,12 +14,17 @@ except Exception:
 ROOT_DIR = os.path.expanduser("~/Documents")
 LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-latest.json")
 HISTORY_JSON_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-history.json")
+DB_JSON_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-db.json")
 MAX_HISTORY_ITEMS = 2000
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
     re.IGNORECASE,
 )
+
+
+def _timestamp():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _safe_float(value, default=0.0):
@@ -66,6 +72,103 @@ def _append_history(entry):
     if len(history) > MAX_HISTORY_ITEMS:
         history = history[-MAX_HISTORY_ITEMS:]
     _write_json(HISTORY_JSON_PATH, history)
+    return history
+
+
+def _parse_outcode_family(outcode):
+    match = re.match(r"^([A-Z]{1,2})(\d{1,2})([A-Z]?)$", ("%s" % (outcode or "")).upper())
+    if not match:
+        return "", None, ""
+    return match.group(1), int(match.group(2)), match.group(3)
+
+
+def _empty_counter():
+    return {
+        "traffic_count": 0,
+        "no_traffic_count": 0,
+        "net_score": 0,
+        "last_seen": "",
+    }
+
+
+def _bump_counter(bucket, status, timestamp):
+    if status == "traffic":
+        bucket["traffic_count"] = int(bucket.get("traffic_count") or 0) + 1
+    else:
+        bucket["no_traffic_count"] = int(bucket.get("no_traffic_count") or 0) + 1
+    bucket["net_score"] = int(bucket.get("traffic_count") or 0) - int(bucket.get("no_traffic_count") or 0)
+    bucket["last_seen"] = timestamp or bucket.get("last_seen") or ""
+
+
+def _build_beacon_db(history):
+    db = {
+        "updated_at": _timestamp(),
+        "total_entries": len(history),
+        "outcodes": {},
+        "sectors": {},
+        "families": {},
+    }
+
+    for entry in history:
+        status = ("%s" % (entry.get("status") or "")).strip().lower()
+        if status not in ("traffic", "no_traffic"):
+            continue
+        timestamp = entry.get("timestamp") or ""
+        outcode = ("%s" % (entry.get("outcode") or "")).upper()
+        sector = ("%s" % (entry.get("sector") or "")).upper()
+        family_letters, district_number, district_suffix = _parse_outcode_family(outcode)
+
+        if outcode:
+            outcode_bucket = db["outcodes"].setdefault(
+                outcode,
+                {
+                    "outcode": outcode,
+                    "family_letters": family_letters,
+                    "district_number": district_number,
+                    "district_suffix": district_suffix,
+                    "sector_hits": {},
+                    **_empty_counter()
+                },
+            )
+            _bump_counter(outcode_bucket, status, timestamp)
+            if sector:
+                outcode_bucket["sector_hits"][sector] = int(outcode_bucket["sector_hits"].get(sector) or 0) + 1
+
+        if sector:
+            sector_bucket = db["sectors"].setdefault(
+                sector,
+                {
+                    "sector": sector,
+                    "outcode": outcode,
+                    **_empty_counter()
+                },
+            )
+            _bump_counter(sector_bucket, status, timestamp)
+
+        if family_letters and district_number is not None:
+            family_bucket = db["families"].setdefault(
+                family_letters,
+                {
+                    "family_letters": family_letters,
+                    "districts": {},
+                    **_empty_counter()
+                },
+            )
+            _bump_counter(family_bucket, status, timestamp)
+            district_key = str(district_number)
+            district_bucket = family_bucket["districts"].setdefault(
+                district_key,
+                {
+                    "district_number": district_number,
+                    "outcodes": {},
+                    **_empty_counter()
+                },
+            )
+            _bump_counter(district_bucket, status, timestamp)
+            if outcode:
+                district_bucket["outcodes"][outcode] = int(district_bucket["outcodes"].get(outcode) or 0) + 1
+
+    return db
 
 
 def _get_location_snapshot():
@@ -155,13 +258,16 @@ def main():
     started = time.perf_counter()
     payload = _build_beacon_payload("traffic")
     _write_json(LATEST_JSON_PATH, payload)
-    _append_history(payload)
+    history = _append_history(payload)
+    beacon_db = _build_beacon_db(history)
+    _write_json(DB_JSON_PATH, beacon_db)
     elapsed = time.perf_counter() - started
     print(
-        "[traffic_beacon] saved traffic | %s | %s | %.3fs"
+        "[traffic_beacon] saved traffic | %s | %s | db=%s | %.3fs"
         % (
             payload.get("postcode") or "no_postcode",
             payload.get("timestamp") or "",
+            beacon_db.get("total_entries") or 0,
             elapsed,
         )
     )

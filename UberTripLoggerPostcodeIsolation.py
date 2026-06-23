@@ -892,6 +892,7 @@ def _safe_script_dir():
 SCRIPT_DIR = _safe_script_dir()
 STATE_PATH = os.path.join(SCRIPT_DIR, ".uber_triplogger_postcode_isolation_state.json")
 ROOT_DIR = os.path.expanduser("~/Documents")
+TRAFFIC_BEACON_DB_PATH = os.path.join(ROOT_DIR, "TrafficBeacon-db.json")
 TEXT_LOG_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
 LEDGER_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
 LATEST_JSON_PATH = os.path.join(ROOT_DIR, "TripLog-OnisAI-PostcodeIsolation-latest.json")
@@ -1268,6 +1269,119 @@ CENTRAL_EDGE_RULES = [
     },
 ]
 
+TRAP_EXACT_RED_MIN = 2
+TRAP_NEARBY_RED_MIN = 4
+TRAP_EXACT_AMBER_MIN = 1
+TRAP_NEARBY_AMBER_MIN = 2
+
+
+def _load_traffic_beacon_db():
+    try:
+        with open(TRAFFIC_BEACON_DB_PATH, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
+
+
+def _parse_outcode_family(outcode):
+    match = re.match(r"^([A-Z]{1,2})(\d{1,2})([A-Z]?)$", ("%s" % (outcode or "")).upper())
+    if not match:
+        return "", None, ""
+    return match.group(1), int(match.group(2)), match.group(3)
+
+
+def _traffic_bodytrap_counts(outcode, sector, beacon_db):
+    normalized_outcode = ("%s" % (outcode or "")).upper()
+    normalized_sector = ("%s" % (sector or "")).upper()
+    outcodes = beacon_db.get("outcodes") or {}
+    sectors = beacon_db.get("sectors") or {}
+    families = beacon_db.get("families") or {}
+
+    exact_outcode_bucket = outcodes.get(normalized_outcode) or {}
+    exact_sector_bucket = sectors.get(normalized_sector) or {}
+    exact_outcode_score = int(exact_outcode_bucket.get("net_score") or 0)
+    exact_sector_score = int(exact_sector_bucket.get("net_score") or 0)
+    exact_total = max(exact_outcode_score, exact_sector_score)
+
+    family_letters, district_number, district_suffix = _parse_outcode_family(normalized_outcode)
+    nearby_total = 0
+    nearby_labels = []
+    if family_letters and district_number is not None:
+        for candidate_outcode, candidate_bucket in outcodes.items():
+            candidate_family, candidate_number, candidate_suffix = _parse_outcode_family(candidate_outcode)
+            if candidate_family != family_letters or candidate_number is None:
+                continue
+            if candidate_outcode == normalized_outcode:
+                continue
+            if abs(candidate_number - district_number) > 2:
+                continue
+            if district_suffix and candidate_suffix and district_suffix != candidate_suffix:
+                continue
+            candidate_score = int(candidate_bucket.get("net_score") or 0)
+            if candidate_score <= 0:
+                continue
+            nearby_total += candidate_score
+            nearby_labels.append(candidate_outcode)
+
+    family_bucket = families.get(family_letters) or {}
+    return {
+        "exact_outcode_score": exact_outcode_score,
+        "exact_sector_score": exact_sector_score,
+        "exact_total": exact_total,
+        "nearby_total": nearby_total,
+        "nearby_labels": sorted(nearby_labels),
+        "family_letters": family_letters,
+        "district_number": district_number,
+        "family_total": int(family_bucket.get("net_score") or 0),
+    }
+
+
+def _traffic_db_verdict(parsed, now_dt=None):
+    beacon_db = _load_traffic_beacon_db()
+    if not beacon_db:
+        return None
+
+    total_entries = int(beacon_db.get("total_entries") or 0)
+    if total_entries <= 0:
+        return None
+
+    dropoff_outcode = parsed.get("dropoff_outcode") or ""
+    dropoff_sector = parsed.get("dropoff_sector") or ""
+    if not dropoff_outcode:
+        return None
+
+    counts = _traffic_bodytrap_counts(dropoff_outcode, dropoff_sector, beacon_db)
+    exact_total = counts["exact_total"]
+    nearby_total = counts["nearby_total"]
+    nearby_labels = counts["nearby_labels"]
+    label = ("%s traps" % dropoff_outcode).strip()
+    summary = "exact=%s nearby=%s" % (exact_total, nearby_total)
+    if nearby_labels:
+        summary += " [%s]" % ",".join(nearby_labels[:4])
+
+    if exact_total >= TRAP_EXACT_RED_MIN or nearby_total >= TRAP_NEARBY_RED_MIN or (exact_total + nearby_total) >= TRAP_NEARBY_RED_MIN:
+        verdict = _traffic_verdict_payload("RED", label, "dropoff", "beacon_db_%s" % summary, _traffic_time_bucket(now_dt or datetime.datetime.now()))
+        verdict["source"] = "beacon_db"
+        verdict["exact_total"] = exact_total
+        verdict["nearby_total"] = nearby_total
+        verdict["nearby_labels"] = nearby_labels
+        verdict["db_total_entries"] = total_entries
+        return verdict
+
+    if exact_total >= TRAP_EXACT_AMBER_MIN or nearby_total >= TRAP_NEARBY_AMBER_MIN:
+        verdict = _traffic_verdict_payload("AMBER", label, "dropoff", "beacon_db_%s" % summary, _traffic_time_bucket(now_dt or datetime.datetime.now()))
+        verdict["source"] = "beacon_db"
+        verdict["exact_total"] = exact_total
+        verdict["nearby_total"] = nearby_total
+        verdict["nearby_labels"] = nearby_labels
+        verdict["db_total_entries"] = total_entries
+        return verdict
+
+    return None
+
 
 def _zone_matches_rule(address_text, outcode, rule):
     lowered = ("%s" % (address_text or "")).lower()
@@ -1349,6 +1463,9 @@ def _match_central_edge_zone(address_text, outcode):
 def _traffic_zone_verdict(parsed, now_dt=None):
     now_dt = now_dt or datetime.datetime.now()
     time_bucket = _traffic_time_bucket(now_dt)
+    db_verdict = _traffic_db_verdict(parsed, now_dt)
+    if db_verdict:
+        return db_verdict
     pairs = [
         ("dropoff", parsed.get("dropoff_address") or "", parsed.get("dropoff_outcode") or ""),
         ("pickup", parsed.get("pickup_address") or "", parsed.get("pickup_outcode") or ""),
@@ -1359,28 +1476,46 @@ def _traffic_zone_verdict(parsed, now_dt=None):
         if not zone_name:
             continue
         if time_bucket in ("early_morning", "evening", "weekend_evening"):
-            return _traffic_verdict_payload("GREEN", zone_name, scope, "central_edge_offpeak", time_bucket)
+            verdict = _traffic_verdict_payload("GREEN", zone_name, scope, "central_edge_offpeak", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
         if time_bucket in ("pm_shoulder", "weekend_busy"):
-            return _traffic_verdict_payload("AMBER", zone_name, scope, "central_edge_mixed", time_bucket)
-        return _traffic_verdict_payload("RED", zone_name, scope, "central_edge_busy", time_bucket)
+            verdict = _traffic_verdict_payload("AMBER", zone_name, scope, "central_edge_mixed", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
+        verdict = _traffic_verdict_payload("RED", zone_name, scope, "central_edge_busy", time_bucket)
+        verdict["source"] = "hardcoded"
+        return verdict
 
     for scope, _address_text, outcode in pairs:
         if _is_green_outcode(outcode):
-            return _traffic_verdict_payload("GREEN", outcode or "Preferred", scope, "preferred_corridor", time_bucket)
+            verdict = _traffic_verdict_payload("GREEN", outcode or "Preferred", scope, "preferred_corridor", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
 
     for scope, _address_text, outcode in pairs:
         if _is_amber_outcode(outcode):
             if time_bucket in ("early_morning", "evening", "weekend_evening"):
-                return _traffic_verdict_payload("GREEN", outcode or "Amber Edge", scope, "amber_edge_offpeak", time_bucket)
+                verdict = _traffic_verdict_payload("GREEN", outcode or "Amber Edge", scope, "amber_edge_offpeak", time_bucket)
+                verdict["source"] = "hardcoded"
+                return verdict
             if time_bucket in ("pm_shoulder", "weekend_busy"):
-                return _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "amber_edge_mixed", time_bucket)
-            return _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "amber_edge_busy", time_bucket)
+                verdict = _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "amber_edge_mixed", time_bucket)
+                verdict["source"] = "hardcoded"
+                return verdict
+            verdict = _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "amber_edge_busy", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
 
     for scope, _address_text, outcode in pairs:
         if _is_red_family_outcode(outcode):
-            return _traffic_verdict_payload("RED", outcode or "Avoid", scope, "north_or_east_pull", time_bucket)
+            verdict = _traffic_verdict_payload("RED", outcode or "Avoid", scope, "north_or_east_pull", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
 
-    return _traffic_verdict_payload("NEUTRAL", "Neutral", "", "no_strong_match", time_bucket)
+    verdict = _traffic_verdict_payload("NEUTRAL", "Neutral", "", "no_strong_match", time_bucket)
+    verdict["source"] = "hardcoded"
+    return verdict
 
 
 def _derive_offer_metrics(parsed):
