@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v7
+# version: 2026-06-23-postcode-isolation-trapdb-v8
 import hashlib
 import json
 import os
@@ -1337,6 +1337,9 @@ TRAP_NEARBY_AMBER_MIN = 2
 DB_GREEN_EXACT_TIME_MIN_ABS_SCORE = 2
 DB_GREEN_MIN_CONFIDENCE = "medium"
 CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
+DB_GREEN_FRESH_MAX_DAYS = 7
+DB_GREEN_RECENT_MAX_DAYS = 21
+DB_GREEN_MEDIUM_MIN_SAMPLES_FRESH = 4
 
 
 def _load_traffic_beacon_db():
@@ -1417,6 +1420,41 @@ def _bucket_time_leaf(bucket, time_bucket):
     return leaf if isinstance(leaf, dict) else {}
 
 
+def _parse_local_timestamp(value):
+    text = ("%s" % (value or "")).strip()
+    if not text:
+        return None
+    try:
+        return datetime.datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _days_since_timestamp(value, now_dt):
+    parsed = _parse_local_timestamp(value)
+    if parsed is None:
+        return None
+    delta = now_dt - parsed
+    return max(0.0, delta.total_seconds() / 86400.0)
+
+
+def _green_time_bucket_gate(score, samples, confidence, last_seen, now_dt):
+    if score > -DB_GREEN_EXACT_TIME_MIN_ABS_SCORE:
+        return False, "score_too_weak", None
+    age_days = _days_since_timestamp(last_seen, now_dt)
+    if age_days is None:
+        return False, "missing_last_seen", None
+    if age_days <= DB_GREEN_FRESH_MAX_DAYS:
+        if _confidence_at_least(confidence, DB_GREEN_MIN_CONFIDENCE) and int(samples or 0) >= DB_GREEN_MEDIUM_MIN_SAMPLES_FRESH:
+            return True, "fresh", age_days
+        return False, "fresh_but_low_confidence", age_days
+    if age_days <= DB_GREEN_RECENT_MAX_DAYS:
+        if _confidence_at_least(confidence, "high"):
+            return True, "recent_high_confidence", age_days
+        return False, "recent_not_high_confidence", age_days
+    return False, "stale", age_days
+
+
 def _traffic_db_verdict(parsed, now_dt=None):
     now_dt = now_dt or datetime.datetime.now()
     current_time_bucket = _traffic_time_bucket(now_dt)
@@ -1459,20 +1497,28 @@ def _traffic_db_verdict(parsed, now_dt=None):
     sector_time_samples = int(sector_time_leaf.get("samples") or 0)
     outcode_time_confidence = outcode_time_leaf.get("confidence") or "low"
     sector_time_confidence = sector_time_leaf.get("confidence") or "low"
+    outcode_time_last_seen = outcode_time_leaf.get("last_seen") or ""
+    sector_time_last_seen = sector_time_leaf.get("last_seen") or ""
     best_time_score = min(outcode_time_score, sector_time_score)
     best_time_samples = max(outcode_time_samples, sector_time_samples)
     best_time_confidence = sector_time_confidence
+    best_time_last_seen = sector_time_last_seen
     if outcode_time_score <= sector_time_score:
         best_time_confidence = outcode_time_confidence
-    if (
-        best_time_score <= -DB_GREEN_EXACT_TIME_MIN_ABS_SCORE
-        and _confidence_at_least(best_time_confidence, DB_GREEN_MIN_CONFIDENCE)
-    ):
+        best_time_last_seen = outcode_time_last_seen
+    green_ok, green_gate_reason, green_age_days = _green_time_bucket_gate(
+        best_time_score,
+        best_time_samples,
+        best_time_confidence,
+        best_time_last_seen,
+        now_dt,
+    )
+    if green_ok:
         verdict = _traffic_verdict_payload(
             "GREEN",
             "%s %s" % (dropoff_outcode, current_time_bucket),
             "dropoff",
-            "beacon_db_time_green score=%s samples=%s" % (best_time_score, best_time_samples),
+            "beacon_db_time_green score=%s samples=%s gate=%s" % (best_time_score, best_time_samples, green_gate_reason),
             current_time_bucket,
         )
         verdict["source"] = "beacon_db"
@@ -1483,6 +1529,9 @@ def _traffic_db_verdict(parsed, now_dt=None):
         verdict["time_bucket_score"] = best_time_score
         verdict["time_bucket_samples"] = best_time_samples
         verdict["time_bucket_confidence"] = best_time_confidence
+        verdict["time_bucket_last_seen"] = best_time_last_seen
+        verdict["time_bucket_age_days"] = round(green_age_days or 0.0, 2)
+        verdict["time_bucket_gate"] = green_gate_reason
         return verdict
 
     if exact_total >= TRAP_EXACT_AMBER_MIN or nearby_total >= TRAP_NEARBY_AMBER_MIN:
