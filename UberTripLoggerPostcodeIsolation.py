@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v3
+# version: 2026-06-23-postcode-isolation-trapdb-v4
 import hashlib
 import json
 import os
@@ -1513,21 +1513,34 @@ def _match_central_edge_zone(address_text, outcode):
     return ""
 
 
-def _traffic_zone_verdict(parsed, now_dt=None):
-    now_dt = now_dt or datetime.datetime.now()
-    time_bucket = _traffic_time_bucket(now_dt)
-    db_verdict = _traffic_db_verdict(parsed, now_dt)
-    if db_verdict:
-        return db_verdict
-    pairs = [
-        ("dropoff", parsed.get("dropoff_address") or "", parsed.get("dropoff_outcode") or ""),
-        ("pickup", parsed.get("pickup_address") or "", parsed.get("pickup_outcode") or ""),
-    ]
+def _traffic_scope_verdict(scope, address_text, outcode, time_bucket):
+    zone_name = _match_central_edge_zone(address_text, outcode)
 
-    for scope, address_text, outcode in pairs:
-        zone_name = _match_central_edge_zone(address_text, outcode)
-        if not zone_name:
-            continue
+    if scope == "dropoff":
+        if _is_red_family_outcode(outcode):
+            verdict = _traffic_verdict_payload("RED", outcode or "Avoid", scope, "north_or_east_pull", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
+        if _is_amber_outcode(outcode):
+            label = zone_name or outcode or "Amber Edge"
+            verdict = _traffic_verdict_payload("AMBER", label, scope, "dropoff_risk_priority", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
+        if zone_name:
+            if time_bucket in ("pm_shoulder", "weekend_busy", "midday", "am_peak"):
+                verdict = _traffic_verdict_payload("RED", zone_name, scope, "central_edge_busy", time_bucket)
+                verdict["source"] = "hardcoded"
+                return verdict
+            verdict = _traffic_verdict_payload("AMBER", zone_name, scope, "central_edge_dropoff_caution", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
+        if _is_green_outcode(outcode):
+            verdict = _traffic_verdict_payload("GREEN", outcode or "Preferred", scope, "preferred_corridor", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
+        return None
+
+    if zone_name:
         if time_bucket in ("early_morning", "evening", "weekend_evening"):
             verdict = _traffic_verdict_payload("GREEN", zone_name, scope, "central_edge_offpeak", time_bucket)
             verdict["source"] = "hardcoded"
@@ -1540,31 +1553,55 @@ def _traffic_zone_verdict(parsed, now_dt=None):
         verdict["source"] = "hardcoded"
         return verdict
 
-    for scope, _address_text, outcode in pairs:
-        if _is_green_outcode(outcode):
-            verdict = _traffic_verdict_payload("GREEN", outcode or "Preferred", scope, "preferred_corridor", time_bucket)
-            verdict["source"] = "hardcoded"
-            return verdict
+    if _is_green_outcode(outcode):
+        verdict = _traffic_verdict_payload("GREEN", outcode or "Preferred", scope, "preferred_corridor", time_bucket)
+        verdict["source"] = "hardcoded"
+        return verdict
 
-    for scope, _address_text, outcode in pairs:
-        if _is_amber_outcode(outcode):
-            if time_bucket in ("early_morning", "evening", "weekend_evening"):
-                verdict = _traffic_verdict_payload("GREEN", outcode or "Amber Edge", scope, "amber_edge_offpeak", time_bucket)
-                verdict["source"] = "hardcoded"
-                return verdict
-            if time_bucket in ("pm_shoulder", "weekend_busy"):
-                verdict = _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "amber_edge_mixed", time_bucket)
-                verdict["source"] = "hardcoded"
-                return verdict
-            verdict = _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "amber_edge_busy", time_bucket)
+    if _is_amber_outcode(outcode):
+        if time_bucket in ("early_morning", "evening", "weekend_evening"):
+            verdict = _traffic_verdict_payload("GREEN", outcode or "Amber Edge", scope, "amber_edge_offpeak", time_bucket)
             verdict["source"] = "hardcoded"
             return verdict
+        if time_bucket in ("pm_shoulder", "weekend_busy"):
+            verdict = _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "amber_edge_mixed", time_bucket)
+            verdict["source"] = "hardcoded"
+            return verdict
+        verdict = _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "amber_edge_busy", time_bucket)
+        verdict["source"] = "hardcoded"
+        return verdict
 
-    for scope, _address_text, outcode in pairs:
-        if _is_red_family_outcode(outcode):
-            verdict = _traffic_verdict_payload("RED", outcode or "Avoid", scope, "north_or_east_pull", time_bucket)
-            verdict["source"] = "hardcoded"
-            return verdict
+    if _is_red_family_outcode(outcode):
+        verdict = _traffic_verdict_payload("RED", outcode or "Avoid", scope, "north_or_east_pull", time_bucket)
+        verdict["source"] = "hardcoded"
+        return verdict
+
+    return None
+
+
+def _traffic_zone_verdict(parsed, now_dt=None):
+    now_dt = now_dt or datetime.datetime.now()
+    time_bucket = _traffic_time_bucket(now_dt)
+    db_verdict = _traffic_db_verdict(parsed, now_dt)
+    if db_verdict:
+        return db_verdict
+    dropoff_verdict = _traffic_scope_verdict(
+        "dropoff",
+        parsed.get("dropoff_address") or "",
+        parsed.get("dropoff_outcode") or "",
+        time_bucket,
+    )
+    if dropoff_verdict:
+        return dropoff_verdict
+
+    pickup_verdict = _traffic_scope_verdict(
+        "pickup",
+        parsed.get("pickup_address") or "",
+        parsed.get("pickup_outcode") or "",
+        time_bucket,
+    )
+    if pickup_verdict:
+        return pickup_verdict
 
     verdict = _traffic_verdict_payload("NEUTRAL", "Neutral", "", "no_strong_match", time_bucket)
     verdict["source"] = "hardcoded"
