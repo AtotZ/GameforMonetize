@@ -1,4 +1,4 @@
-# version: 2026-06-23-traffic-beacon-db-v3
+# version: 2026-06-23-traffic-beacon-db-v4
 import datetime
 import json
 import os
@@ -23,6 +23,8 @@ ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
 ROUTE_DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
 MAX_HISTORY_ITEMS = 2000
 ACTIVE_OFFER_MAX_AGE_SECONDS = 6 * 60 * 60
+CONFIDENCE_MEDIUM_MIN_SAMPLES = 3
+CONFIDENCE_HIGH_MIN_SAMPLES = 8
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
@@ -103,12 +105,47 @@ def _parse_outcode_family(outcode):
     return match.group(1), int(match.group(2)), match.group(3)
 
 
-def _empty_counter():
+def _time_bucket_name_from_timestamp(timestamp):
+    dt_obj = _parse_timestamp(timestamp)
+    if not dt_obj:
+        dt_obj = datetime.datetime.now()
+    mins = dt_obj.hour * 60 + dt_obj.minute
+    weekday = dt_obj.weekday() < 5
+    if weekday:
+        if mins < 420:
+            return "early_morning"
+        if mins < 630:
+            return "am_peak"
+        if mins < 960:
+            return "midday"
+        if mins < 1110:
+            return "pm_shoulder"
+        return "evening"
+    if mins < 660:
+        return "weekend_early"
+    if mins < 1080:
+        return "weekend_busy"
+    return "weekend_evening"
+
+
+def _confidence_label(samples):
+    value = int(samples or 0)
+    if value >= CONFIDENCE_HIGH_MIN_SAMPLES:
+        return "high"
+    if value >= CONFIDENCE_MEDIUM_MIN_SAMPLES:
+        return "medium"
+    return "low"
+
+
+def _empty_counter(with_time_buckets=True):
     return {
         "traffic_count": 0,
         "no_traffic_count": 0,
         "net_score": 0,
+        "samples": 0,
+        "confidence": "low",
         "last_seen": "",
+        "time_buckets": {} if with_time_buckets else None,
     }
 
 
@@ -118,13 +155,30 @@ def _bump_counter(bucket, status, timestamp):
     else:
         bucket["no_traffic_count"] = int(bucket.get("no_traffic_count") or 0) + 1
     bucket["net_score"] = int(bucket.get("traffic_count") or 0) - int(bucket.get("no_traffic_count") or 0)
+    bucket["samples"] = int(bucket.get("samples") or 0) + 1
+    bucket["confidence"] = _confidence_label(bucket["samples"])
     bucket["last_seen"] = timestamp or bucket.get("last_seen") or ""
+    if isinstance(bucket.get("time_buckets"), dict):
+        time_bucket = _time_bucket_name_from_timestamp(timestamp)
+        leaf = bucket["time_buckets"].setdefault(time_bucket, _empty_counter(with_time_buckets=False))
+        if status == "traffic":
+            leaf["traffic_count"] = int(leaf.get("traffic_count") or 0) + 1
+        else:
+            leaf["no_traffic_count"] = int(leaf.get("no_traffic_count") or 0) + 1
+        leaf["net_score"] = int(leaf.get("traffic_count") or 0) - int(leaf.get("no_traffic_count") or 0)
+        leaf["samples"] = int(leaf.get("samples") or 0) + 1
+        leaf["confidence"] = _confidence_label(leaf["samples"])
+        leaf["last_seen"] = timestamp or leaf.get("last_seen") or ""
 
 
 def _build_beacon_db(history):
     db = {
         "updated_at": _timestamp(),
         "total_entries": len(history),
+        "confidence_thresholds": {
+            "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
+            "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
+        },
         "outcodes": {},
         "sectors": {},
         "families": {},
@@ -229,11 +283,13 @@ def _route_bucket(active_offer):
         "traffic_count": 0,
         "no_traffic_count": 0,
         "net_score": 0,
+        "samples": 0,
+        "confidence": "low",
         "last_seen": "",
         "last_offer_timestamp": active_offer.get("timestamp") or "",
-        "samples": 0,
         "beacon_outcodes": {},
         "beacon_sectors": {},
+        "time_buckets": {},
     }
 
 
@@ -244,6 +300,10 @@ def _update_route_db(active_offer, beacon_payload):
     routes = route_db.setdefault("routes", {})
     route_db["updated_at"] = _timestamp()
     route_db["active_offer_max_age_seconds"] = ACTIVE_OFFER_MAX_AGE_SECONDS
+    route_db["confidence_thresholds"] = {
+        "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
+        "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
+    }
     route_key = _route_key(active_offer)
     bucket = routes.setdefault(route_key, _route_bucket(active_offer))
 
@@ -256,8 +316,19 @@ def _update_route_db(active_offer, beacon_payload):
         bucket["no_traffic_count"] = int(bucket.get("no_traffic_count") or 0) + 1
     bucket["net_score"] = int(bucket.get("traffic_count") or 0) - int(bucket.get("no_traffic_count") or 0)
     bucket["samples"] = int(bucket.get("samples") or 0) + 1
+    bucket["confidence"] = _confidence_label(bucket["samples"])
     bucket["last_seen"] = beacon_payload.get("timestamp") or bucket.get("last_seen") or ""
     bucket["last_offer_timestamp"] = active_offer.get("timestamp") or bucket.get("last_offer_timestamp") or ""
+    time_bucket = _time_bucket_name_from_timestamp(beacon_payload.get("timestamp") or "")
+    time_leaf = bucket["time_buckets"].setdefault(time_bucket, _empty_counter(with_time_buckets=False))
+    if status == "traffic":
+        time_leaf["traffic_count"] = int(time_leaf.get("traffic_count") or 0) + 1
+    else:
+        time_leaf["no_traffic_count"] = int(time_leaf.get("no_traffic_count") or 0) + 1
+    time_leaf["net_score"] = int(time_leaf.get("traffic_count") or 0) - int(time_leaf.get("no_traffic_count") or 0)
+    time_leaf["samples"] = int(time_leaf.get("samples") or 0) + 1
+    time_leaf["confidence"] = _confidence_label(time_leaf["samples"])
+    time_leaf["last_seen"] = beacon_payload.get("timestamp") or time_leaf.get("last_seen") or ""
     if beacon_outcode:
         bucket["beacon_outcodes"][beacon_outcode] = int(bucket["beacon_outcodes"].get(beacon_outcode) or 0) + 1
     if beacon_sector:
