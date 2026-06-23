@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v8
+# version: 2026-06-23-postcode-isolation-trapdb-v9
 import hashlib
 import json
 import os
@@ -1340,6 +1340,8 @@ CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
 DB_GREEN_FRESH_MAX_DAYS = 7
 DB_GREEN_RECENT_MAX_DAYS = 21
 DB_GREEN_MEDIUM_MIN_SAMPLES_FRESH = 4
+DB_RED_TIME_SCORE_MIN = 2
+DB_RED_FRESH_MIN_SAMPLES = 3
 
 
 def _load_traffic_beacon_db():
@@ -1455,6 +1457,23 @@ def _green_time_bucket_gate(score, samples, confidence, last_seen, now_dt):
     return False, "stale", age_days
 
 
+def _positive_time_bucket_gate(score, samples, confidence, last_seen, now_dt, min_score, min_samples_fresh):
+    if score < int(min_score or 0):
+        return False, "score_too_weak", None
+    age_days = _days_since_timestamp(last_seen, now_dt)
+    if age_days is None:
+        return False, "missing_last_seen", None
+    if age_days <= DB_GREEN_FRESH_MAX_DAYS:
+        if _confidence_at_least(confidence, DB_GREEN_MIN_CONFIDENCE) and int(samples or 0) >= int(min_samples_fresh or 0):
+            return True, "fresh", age_days
+        return False, "fresh_but_low_confidence", age_days
+    if age_days <= DB_GREEN_RECENT_MAX_DAYS:
+        if _confidence_at_least(confidence, "high"):
+            return True, "recent_high_confidence", age_days
+        return False, "recent_not_high_confidence", age_days
+    return False, "stale", age_days
+
+
 def _traffic_db_verdict(parsed, now_dt=None):
     now_dt = now_dt or datetime.datetime.now()
     current_time_bucket = _traffic_time_bucket(now_dt)
@@ -1480,15 +1499,6 @@ def _traffic_db_verdict(parsed, now_dt=None):
     if nearby_labels:
         summary += " [%s]" % ",".join(nearby_labels[:4])
 
-    if exact_total >= TRAP_EXACT_RED_MIN or nearby_total >= TRAP_NEARBY_RED_MIN or (exact_total + nearby_total) >= TRAP_NEARBY_RED_MIN:
-        verdict = _traffic_verdict_payload("RED", label, "dropoff", "beacon_db_%s" % summary, current_time_bucket)
-        verdict["source"] = "beacon_db"
-        verdict["exact_total"] = exact_total
-        verdict["nearby_total"] = nearby_total
-        verdict["nearby_labels"] = nearby_labels
-        verdict["db_total_entries"] = total_entries
-        return verdict
-
     outcode_time_leaf = _bucket_time_leaf(counts["exact_outcode_bucket"], current_time_bucket)
     sector_time_leaf = _bucket_time_leaf(counts["exact_sector_bucket"], current_time_bucket)
     outcode_time_score = int(outcode_time_leaf.get("net_score") or 0)
@@ -1513,6 +1523,47 @@ def _traffic_db_verdict(parsed, now_dt=None):
         best_time_last_seen,
         now_dt,
     )
+    best_positive_score = max(outcode_time_score, sector_time_score)
+    best_positive_samples = sector_time_samples
+    best_positive_confidence = sector_time_confidence
+    best_positive_last_seen = sector_time_last_seen
+    if outcode_time_score >= sector_time_score:
+        best_positive_samples = outcode_time_samples
+        best_positive_confidence = outcode_time_confidence
+        best_positive_last_seen = outcode_time_last_seen
+    red_signal_ok, red_gate_reason, red_age_days = _positive_time_bucket_gate(
+        best_positive_score,
+        best_positive_samples,
+        best_positive_confidence,
+        best_positive_last_seen,
+        now_dt,
+        DB_RED_TIME_SCORE_MIN,
+        DB_RED_FRESH_MIN_SAMPLES,
+    )
+    if exact_total >= TRAP_EXACT_RED_MIN or nearby_total >= TRAP_NEARBY_RED_MIN or (exact_total + nearby_total) >= TRAP_NEARBY_RED_MIN:
+        status = "RED"
+        reason = "beacon_db_%s" % summary
+        if green_ok:
+            status = "AMBER"
+            reason = "beacon_db_red_softened gate=%s exact=%s nearby=%s" % (green_gate_reason, exact_total, nearby_total)
+        elif red_signal_ok:
+            reason = "beacon_db_red_time_confirmed gate=%s exact=%s nearby=%s" % (red_gate_reason, exact_total, nearby_total)
+        elif exact_total < (TRAP_EXACT_RED_MIN + 1) and nearby_total < (TRAP_NEARBY_RED_MIN + 2) and (exact_total + nearby_total) < (TRAP_NEARBY_RED_MIN + 2):
+            status = "AMBER"
+            reason = "beacon_db_red_unconfirmed gate=%s exact=%s nearby=%s" % (red_gate_reason, exact_total, nearby_total)
+        verdict = _traffic_verdict_payload(status, label, "dropoff", reason, current_time_bucket)
+        verdict["source"] = "beacon_db"
+        verdict["exact_total"] = exact_total
+        verdict["nearby_total"] = nearby_total
+        verdict["nearby_labels"] = nearby_labels
+        verdict["db_total_entries"] = total_entries
+        verdict["time_bucket_score"] = best_positive_score
+        verdict["time_bucket_samples"] = best_positive_samples
+        verdict["time_bucket_confidence"] = best_positive_confidence
+        verdict["time_bucket_last_seen"] = best_positive_last_seen
+        verdict["time_bucket_age_days"] = round((red_age_days if red_age_days is not None else green_age_days) or 0.0, 2)
+        verdict["time_bucket_gate"] = red_gate_reason if status == "RED" else (green_gate_reason if green_ok else red_gate_reason)
+        return verdict
     if green_ok:
         verdict = _traffic_verdict_payload(
             "GREEN",
@@ -1535,12 +1586,23 @@ def _traffic_db_verdict(parsed, now_dt=None):
         return verdict
 
     if exact_total >= TRAP_EXACT_AMBER_MIN or nearby_total >= TRAP_NEARBY_AMBER_MIN:
-        verdict = _traffic_verdict_payload("AMBER", label, "dropoff", "beacon_db_%s" % summary, current_time_bucket)
+        status = "AMBER"
+        reason = "beacon_db_%s" % summary
+        if red_signal_ok:
+            status = "RED"
+            reason = "beacon_db_amber_hardened gate=%s exact=%s nearby=%s" % (red_gate_reason, exact_total, nearby_total)
+        verdict = _traffic_verdict_payload(status, label, "dropoff", reason, current_time_bucket)
         verdict["source"] = "beacon_db"
         verdict["exact_total"] = exact_total
         verdict["nearby_total"] = nearby_total
         verdict["nearby_labels"] = nearby_labels
         verdict["db_total_entries"] = total_entries
+        verdict["time_bucket_score"] = best_positive_score
+        verdict["time_bucket_samples"] = best_positive_samples
+        verdict["time_bucket_confidence"] = best_positive_confidence
+        verdict["time_bucket_last_seen"] = best_positive_last_seen
+        verdict["time_bucket_age_days"] = round(red_age_days or 0.0, 2)
+        verdict["time_bucket_gate"] = red_gate_reason
         return verdict
 
     return None
