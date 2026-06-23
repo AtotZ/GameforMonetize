@@ -1,3 +1,4 @@
+# version: 2026-06-23-traffic-beacon-db-v1
 import datetime
 import json
 import os

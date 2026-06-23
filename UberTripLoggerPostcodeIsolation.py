@@ -1,4 +1,5 @@
 ﻿import datetime
+# version: 2026-06-23-postcode-isolation-trapdb-v1
 import hashlib
 import json
 import os

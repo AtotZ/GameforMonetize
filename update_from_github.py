@@ -1,4 +1,5 @@
 import datetime
+# version: 2026-06-23-updater-selfupdate-v1
 import json
 import os
 import time
