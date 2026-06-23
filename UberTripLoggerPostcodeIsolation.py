@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v6
+# version: 2026-06-23-postcode-isolation-trapdb-v7
 import hashlib
 import json
 import os
@@ -1334,6 +1334,9 @@ TRAP_EXACT_RED_MIN = 2
 TRAP_NEARBY_RED_MIN = 4
 TRAP_EXACT_AMBER_MIN = 1
 TRAP_NEARBY_AMBER_MIN = 2
+DB_GREEN_EXACT_TIME_MIN_ABS_SCORE = 2
+DB_GREEN_MIN_CONFIDENCE = "medium"
+CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
 
 
 def _load_traffic_beacon_db():
@@ -1389,6 +1392,8 @@ def _traffic_bodytrap_counts(outcode, sector, beacon_db):
 
     family_bucket = families.get(family_letters) or {}
     return {
+        "exact_outcode_bucket": exact_outcode_bucket,
+        "exact_sector_bucket": exact_sector_bucket,
         "exact_outcode_score": exact_outcode_score,
         "exact_sector_score": exact_sector_score,
         "exact_total": exact_total,
@@ -1400,7 +1405,21 @@ def _traffic_bodytrap_counts(outcode, sector, beacon_db):
     }
 
 
+def _confidence_at_least(value, minimum):
+    return CONFIDENCE_RANK.get(("%s" % (value or "")).lower(), 0) >= CONFIDENCE_RANK.get(("%s" % (minimum or "")).lower(), 0)
+
+
+def _bucket_time_leaf(bucket, time_bucket):
+    if not isinstance(bucket, dict):
+        return {}
+    leaves = bucket.get("time_buckets") or {}
+    leaf = leaves.get(time_bucket) or {}
+    return leaf if isinstance(leaf, dict) else {}
+
+
 def _traffic_db_verdict(parsed, now_dt=None):
+    now_dt = now_dt or datetime.datetime.now()
+    current_time_bucket = _traffic_time_bucket(now_dt)
     beacon_db = _load_traffic_beacon_db()
     if not beacon_db:
         return None
@@ -1424,7 +1443,7 @@ def _traffic_db_verdict(parsed, now_dt=None):
         summary += " [%s]" % ",".join(nearby_labels[:4])
 
     if exact_total >= TRAP_EXACT_RED_MIN or nearby_total >= TRAP_NEARBY_RED_MIN or (exact_total + nearby_total) >= TRAP_NEARBY_RED_MIN:
-        verdict = _traffic_verdict_payload("RED", label, "dropoff", "beacon_db_%s" % summary, _traffic_time_bucket(now_dt or datetime.datetime.now()))
+        verdict = _traffic_verdict_payload("RED", label, "dropoff", "beacon_db_%s" % summary, current_time_bucket)
         verdict["source"] = "beacon_db"
         verdict["exact_total"] = exact_total
         verdict["nearby_total"] = nearby_total
@@ -1432,8 +1451,42 @@ def _traffic_db_verdict(parsed, now_dt=None):
         verdict["db_total_entries"] = total_entries
         return verdict
 
+    outcode_time_leaf = _bucket_time_leaf(counts["exact_outcode_bucket"], current_time_bucket)
+    sector_time_leaf = _bucket_time_leaf(counts["exact_sector_bucket"], current_time_bucket)
+    outcode_time_score = int(outcode_time_leaf.get("net_score") or 0)
+    sector_time_score = int(sector_time_leaf.get("net_score") or 0)
+    outcode_time_samples = int(outcode_time_leaf.get("samples") or 0)
+    sector_time_samples = int(sector_time_leaf.get("samples") or 0)
+    outcode_time_confidence = outcode_time_leaf.get("confidence") or "low"
+    sector_time_confidence = sector_time_leaf.get("confidence") or "low"
+    best_time_score = min(outcode_time_score, sector_time_score)
+    best_time_samples = max(outcode_time_samples, sector_time_samples)
+    best_time_confidence = sector_time_confidence
+    if outcode_time_score <= sector_time_score:
+        best_time_confidence = outcode_time_confidence
+    if (
+        best_time_score <= -DB_GREEN_EXACT_TIME_MIN_ABS_SCORE
+        and _confidence_at_least(best_time_confidence, DB_GREEN_MIN_CONFIDENCE)
+    ):
+        verdict = _traffic_verdict_payload(
+            "GREEN",
+            "%s %s" % (dropoff_outcode, current_time_bucket),
+            "dropoff",
+            "beacon_db_time_green score=%s samples=%s" % (best_time_score, best_time_samples),
+            current_time_bucket,
+        )
+        verdict["source"] = "beacon_db"
+        verdict["exact_total"] = exact_total
+        verdict["nearby_total"] = nearby_total
+        verdict["nearby_labels"] = nearby_labels
+        verdict["db_total_entries"] = total_entries
+        verdict["time_bucket_score"] = best_time_score
+        verdict["time_bucket_samples"] = best_time_samples
+        verdict["time_bucket_confidence"] = best_time_confidence
+        return verdict
+
     if exact_total >= TRAP_EXACT_AMBER_MIN or nearby_total >= TRAP_NEARBY_AMBER_MIN:
-        verdict = _traffic_verdict_payload("AMBER", label, "dropoff", "beacon_db_%s" % summary, _traffic_time_bucket(now_dt or datetime.datetime.now()))
+        verdict = _traffic_verdict_payload("AMBER", label, "dropoff", "beacon_db_%s" % summary, current_time_bucket)
         verdict["source"] = "beacon_db"
         verdict["exact_total"] = exact_total
         verdict["nearby_total"] = nearby_total
