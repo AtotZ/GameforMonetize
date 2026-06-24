@@ -1,6 +1,6 @@
 import base64
 import datetime
-# version: 2026-06-23-private-data-upload-bootstrap-v2
+# version: 2026-06-24-private-data-upload-chain-breadcrumb-v3
 import json
 import os
 import time
@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-23-private-upload-v2"
+SCRIPT_BUILD = "2026-06-24-private-upload-v3"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -90,6 +90,18 @@ EXAMPLE_CONFIG = {
 
 def _timestamp():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _read_invocation_context():
+    invoked_by = ("%s" % (os.environ.get("PYTHONISTA_UPDATE_CHAIN") or "")).strip()
+    invoked_by_build = ("%s" % (os.environ.get("PYTHONISTA_UPDATE_CHAIN_BUILD") or "")).strip()
+    invoked_started_at = ("%s" % (os.environ.get("PYTHONISTA_UPDATE_CHAIN_STARTED_AT") or "")).strip()
+    return {
+        "invoked_by": invoked_by or "direct",
+        "invoked_by_build": invoked_by_build,
+        "invoked_started_at": invoked_started_at,
+        "update_chain_ok": bool(invoked_by),
+    }
 
 
 def _ensure_example_config():
@@ -283,13 +295,17 @@ def _upload_one(config, item):
     }
 
 
-def _build_manifest(upload_results):
+def _build_manifest(upload_results, invocation_context):
     uploaded = [item for item in upload_results if item.get("status") == "uploaded"]
     missing = [item for item in upload_results if item.get("status") == "missing_local"]
     too_large = [item for item in upload_results if item.get("status") == "too_large"]
     return {
         "updated_at": _timestamp(),
         "script_build": SCRIPT_BUILD,
+        "invoked_by": invocation_context.get("invoked_by") or "direct",
+        "invoked_by_build": invocation_context.get("invoked_by_build") or "",
+        "invoked_started_at": invocation_context.get("invoked_started_at") or "",
+        "update_chain_ok": bool(invocation_context.get("update_chain_ok")),
         "uploaded_count": len(uploaded),
         "missing_count": len(missing),
         "too_large_count": len(too_large),
@@ -329,15 +345,17 @@ def _upload_manifest(config, manifest):
 def main():
     started = time.perf_counter()
     config = _load_config()
+    invocation_context = _read_invocation_context()
     results = []
     for item in config["files"]:
         results.append(_upload_one(config, item))
-    manifest = _build_manifest(results)
+    manifest = _build_manifest(results, invocation_context)
     _upload_manifest(config, manifest)
     status = {
         "ok": True,
         "timestamp": _timestamp(),
         "script_build": SCRIPT_BUILD,
+        "invocation_context": invocation_context,
         "repo": "%s/%s" % (config["owner"], config["repo"]),
         "branch": config["branch"],
         "remote_root": config["remote_root"],

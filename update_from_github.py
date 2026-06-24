@@ -1,5 +1,5 @@
 import datetime
-# version: 2026-06-23-updater-status-versions-v6
+# version: 2026-06-24-updater-chain-breadcrumb-v7
 import json
 import os
 import re
@@ -9,7 +9,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-23-updater-v6"
+SCRIPT_BUILD = "2026-06-24-updater-v7"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 DEFAULT_PRIVATE_SYNC_CONFIG = {
@@ -195,6 +195,12 @@ def _run_private_uploader():
         "ran": True,
         "script_path": PRIVATE_UPLOAD_SCRIPT_PATH,
     }
+    previous_marker = os.environ.get("PYTHONISTA_UPDATE_CHAIN", "")
+    previous_build = os.environ.get("PYTHONISTA_UPDATE_CHAIN_BUILD", "")
+    previous_started = os.environ.get("PYTHONISTA_UPDATE_CHAIN_STARTED_AT", "")
+    os.environ["PYTHONISTA_UPDATE_CHAIN"] = "update_from_github"
+    os.environ["PYTHONISTA_UPDATE_CHAIN_BUILD"] = SCRIPT_BUILD
+    os.environ["PYTHONISTA_UPDATE_CHAIN_STARTED_AT"] = _timestamp()
     try:
         runpy.run_path(PRIVATE_UPLOAD_SCRIPT_PATH, run_name="__main__")
     except SystemExit as exc:
@@ -204,6 +210,19 @@ def _run_private_uploader():
             result["error"] = "Uploader exited with code %s" % code
     except Exception as exc:
         result["error"] = "%s" % exc
+    finally:
+        if previous_marker:
+            os.environ["PYTHONISTA_UPDATE_CHAIN"] = previous_marker
+        else:
+            os.environ.pop("PYTHONISTA_UPDATE_CHAIN", None)
+        if previous_build:
+            os.environ["PYTHONISTA_UPDATE_CHAIN_BUILD"] = previous_build
+        else:
+            os.environ.pop("PYTHONISTA_UPDATE_CHAIN_BUILD", None)
+        if previous_started:
+            os.environ["PYTHONISTA_UPDATE_CHAIN_STARTED_AT"] = previous_started
+        else:
+            os.environ.pop("PYTHONISTA_UPDATE_CHAIN_STARTED_AT", None)
 
     status_payload = _read_existing_json(PRIVATE_UPLOAD_STATUS_PATH)
     if status_payload:
