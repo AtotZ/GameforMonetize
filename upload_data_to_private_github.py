@@ -1,7 +1,7 @@
 import base64
 import datetime
 import hashlib
-# version: 2026-06-24-private-data-upload-fast-console-trim-v7
+# version: 2026-06-24-private-data-upload-sha-cache-v8
 import json
 import os
 import time
@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-private-upload-v7"
+SCRIPT_BUILD = "2026-06-24-private-upload-v8"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -294,6 +294,29 @@ def _get_remote_sha(config, remote_path):
         raise
 
 
+def _put_file_contents(config, remote_path, raw, message, sha=""):
+    body = {
+        "message": message,
+        "content": base64.b64encode(raw).decode("ascii"),
+        "branch": config["branch"],
+    }
+    if sha:
+        body["sha"] = sha
+    if config["commit_user_name"] and config["commit_user_email"]:
+        body["committer"] = {
+            "name": config["commit_user_name"],
+            "email": config["commit_user_email"],
+        }
+    encoded_path = urllib.parse.quote(remote_path, safe="/")
+    url = "%s/repos/%s/%s/contents/%s" % (
+        API_ROOT,
+        urllib.parse.quote(config["owner"], safe=""),
+        urllib.parse.quote(config["repo"], safe=""),
+        encoded_path,
+    )
+    return _api_request(url, config["token"], method="PUT", body=body)
+
+
 def _upload_one(config, item, cache_payload):
     local_rel_path = _normalize_rel_path(item.get("local_rel_path") or "")
     remote_rel_path = _normalize_rel_path(item.get("remote_rel_path") or "")
@@ -333,33 +356,22 @@ def _upload_one(config, item, cache_payload):
             "bytes": len(raw),
             "content_sha1": content_sha1,
         }
-    sha = _get_remote_sha(config, remote_path)
-    body = {
-        "message": "%s | %s | %s" % (
-            config["commit_message_prefix"],
-            item.get("label") or remote_rel_path,
-            _timestamp(),
-        ),
-        "content": base64.b64encode(raw).decode("ascii"),
-        "branch": config["branch"],
-    }
-    if sha:
-        body["sha"] = sha
-    if config["commit_user_name"] and config["commit_user_email"]:
-        body["committer"] = {
-            "name": config["commit_user_name"],
-            "email": config["commit_user_email"],
-        }
-    encoded_path = urllib.parse.quote(remote_path, safe="/")
-    url = "%s/repos/%s/%s/contents/%s" % (
-        API_ROOT,
-        urllib.parse.quote(config["owner"], safe=""),
-        urllib.parse.quote(config["repo"], safe=""),
-        encoded_path,
+    message = "%s | %s | %s" % (
+        config["commit_message_prefix"],
+        item.get("label") or remote_rel_path,
+        _timestamp(),
     )
-    payload = _api_request(url, config["token"], method="PUT", body=body)
+    sha = ("%s" % (cached.get("remote_sha") or "")).strip()
+    try:
+        payload = _put_file_contents(config, remote_path, raw, message, sha=sha)
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (409, 422):
+            raise
+        sha = _get_remote_sha(config, remote_path)
+        payload = _put_file_contents(config, remote_path, raw, message, sha=sha)
     commit = payload.get("commit") or {}
     content = payload.get("content") or {}
+    remote_sha = ("%s" % (content.get("sha") or "")).strip()
     result = {
         "label": item.get("label") or remote_rel_path,
         "local_rel_path": local_rel_path,
@@ -367,12 +379,13 @@ def _upload_one(config, item, cache_payload):
         "status": "uploaded",
         "bytes": len(raw),
         "content_sha1": content_sha1,
-        "sha": ("%s" % (content.get("sha") or "")).strip(),
+        "sha": remote_sha,
         "commit_sha": ("%s" % (commit.get("sha") or "")).strip(),
     }
     cache_payload["files"][remote_path] = {
         "content_sha1": content_sha1,
         "bytes": len(raw),
+        "remote_sha": remote_sha,
         "last_uploaded_at": _timestamp(),
         "label": item.get("label") or remote_rel_path,
     }

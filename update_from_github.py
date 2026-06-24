@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-24-updater-fast-console-trim-v14
+# version: 2026-06-24-updater-skip-upload-on-code-change-v15
 import json
 import os
 import re
@@ -10,7 +10,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-updater-v14"
+SCRIPT_BUILD = "2026-06-24-updater-v15"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -409,7 +409,18 @@ def main():
     for item in FILE_MAP:
         results.append(_update_one_file(item, manifest_payload))
     private_sync_bootstrap = _bootstrap_private_sync_config()
-    private_upload_result = _run_private_uploader()
+    downloaded_count = len([item for item in results if item.get("status") == "downloaded"])
+    skipped_due_to_code_update = downloaded_count > 0
+    if skipped_due_to_code_update:
+        private_upload_result = {
+            "ok": True,
+            "ran": False,
+            "skipped_due_to_code_update": True,
+            "downloaded_count": downloaded_count,
+            "error": "",
+        }
+    else:
+        private_upload_result = _run_private_uploader()
 
     payload = {
         "ok": bool(private_upload_result.get("ok")),
@@ -448,7 +459,12 @@ def main():
                 result["bytes"],
             )
         )
-    if private_upload_result.get("ok"):
+    if private_upload_result.get("skipped_due_to_code_update"):
+        _log(
+            "[updater] private upload deferred | code_updated=%s"
+            % private_upload_result.get("downloaded_count", 0)
+        )
+    elif private_upload_result.get("ok"):
         upload_summary = _summarize_private_upload(private_upload_result)
         _log(
             "[updater] private upload ok | uploaded=%s skipped=%s missing=%s too_large=%s | at=%s"
