@@ -1,4 +1,4 @@
-# version: 2026-06-23-traffic-beacon-db-v4
+# version: 2026-06-24-traffic-beacon-incremental-db-v5
 import datetime
 import json
 import os
@@ -246,6 +246,105 @@ def _build_beacon_db(history):
     return db
 
 
+def _empty_beacon_db():
+    return {
+        "updated_at": _timestamp(),
+        "total_entries": 0,
+        "confidence_thresholds": {
+            "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
+            "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
+        },
+        "outcodes": {},
+        "sectors": {},
+        "families": {},
+    }
+
+
+def _load_or_build_beacon_db():
+    payload = _load_json_dict(DB_JSON_PATH)
+    if payload.get("outcodes") is not None and payload.get("sectors") is not None and payload.get("families") is not None:
+        payload["confidence_thresholds"] = {
+            "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
+            "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
+        }
+        return payload
+    history = _load_history()
+    return _build_beacon_db(history) if history else _empty_beacon_db()
+
+
+def _update_beacon_db_incremental(db, entry):
+    if not isinstance(db, dict):
+        db = _empty_beacon_db()
+    db["updated_at"] = _timestamp()
+    db["confidence_thresholds"] = {
+        "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
+        "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
+    }
+    db.setdefault("outcodes", {})
+    db.setdefault("sectors", {})
+    db.setdefault("families", {})
+    db["total_entries"] = int(db.get("total_entries") or 0) + 1
+
+    status = ("%s" % (entry.get("status") or "")).strip().lower()
+    if status not in ("traffic", "no_traffic"):
+        return db
+    timestamp = entry.get("timestamp") or ""
+    outcode = ("%s" % (entry.get("outcode") or "")).upper()
+    sector = ("%s" % (entry.get("sector") or "")).upper()
+    family_letters, district_number, district_suffix = _parse_outcode_family(outcode)
+
+    if outcode:
+        outcode_bucket = db["outcodes"].setdefault(
+            outcode,
+            {
+                "outcode": outcode,
+                "family_letters": family_letters,
+                "district_number": district_number,
+                "district_suffix": district_suffix,
+                "sector_hits": {},
+                **_empty_counter()
+            },
+        )
+        _bump_counter(outcode_bucket, status, timestamp)
+        if sector:
+            outcode_bucket["sector_hits"][sector] = int(outcode_bucket["sector_hits"].get(sector) or 0) + 1
+
+    if sector:
+        sector_bucket = db["sectors"].setdefault(
+            sector,
+            {
+                "sector": sector,
+                "outcode": outcode,
+                **_empty_counter()
+            },
+        )
+        _bump_counter(sector_bucket, status, timestamp)
+
+    if family_letters and district_number is not None:
+        family_bucket = db["families"].setdefault(
+            family_letters,
+            {
+                "family_letters": family_letters,
+                "districts": {},
+                **_empty_counter()
+            },
+        )
+        _bump_counter(family_bucket, status, timestamp)
+        district_key = str(district_number)
+        district_bucket = family_bucket["districts"].setdefault(
+            district_key,
+            {
+                "district_number": district_number,
+                "outcodes": {},
+                **_empty_counter()
+            },
+        )
+        _bump_counter(district_bucket, status, timestamp)
+        if outcode:
+            district_bucket["outcodes"][outcode] = int(district_bucket["outcodes"].get(outcode) or 0) + 1
+    return db
+
+
 def _parse_timestamp(value):
     try:
         return datetime.datetime.strptime("%s" % (value or ""), "%Y-%m-%d %H:%M:%S")
@@ -429,8 +528,8 @@ def main():
     started = time.perf_counter()
     payload = _build_beacon_payload("traffic")
     _write_json(LATEST_JSON_PATH, payload)
-    history = _append_history(payload)
-    beacon_db = _build_beacon_db(history)
+    _append_history(payload)
+    beacon_db = _update_beacon_db_incremental(_load_or_build_beacon_db(), payload)
     _write_json(DB_JSON_PATH, beacon_db)
     active_offer = _load_active_offer()
     route_stats = _update_route_db(active_offer, payload) if active_offer else {}
