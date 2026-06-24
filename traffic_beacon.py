@@ -1,4 +1,4 @@
-# version: 2026-06-24-traffic-beacon-daily-history-v6
+# version: 2026-06-24-traffic-beacon-partial-outcode-v7
 import datetime
 import glob
 import json
@@ -31,6 +31,10 @@ UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
     re.IGNORECASE,
 )
+UK_OUTCODE_RE = re.compile(
+    r"\b([A-Z]{1,2}\d{1,2}[A-Z]?)\b",
+    re.IGNORECASE,
+)
 
 
 def _timestamp():
@@ -52,12 +56,26 @@ def _extract_postcode_parts(text):
     value = ("%s" % (text or "")).upper()
     match = UK_POSTCODE_RE.search(value)
     if not match:
-        return {"postcode": "", "outcode": "", "sector": ""}
+        return {"postcode": "", "outcode": "", "sector": "", "precision": "none", "source": ""}
     outcode = _normalize_postcode_token(match.group(1))
     inward = _normalize_postcode_token(match.group(2))
     postcode = ("%s %s" % (outcode, inward)).strip()
     sector = ("%s %s" % (outcode, inward[:1])).strip() if inward else outcode
-    return {"postcode": postcode, "outcode": outcode, "sector": sector}
+    return {
+        "postcode": postcode,
+        "outcode": outcode,
+        "sector": sector,
+        "precision": "full",
+        "source": "full_postcode",
+    }
+
+
+def _extract_outcode_only(text):
+    value = ("%s" % (text or "")).upper()
+    match = UK_OUTCODE_RE.search(value)
+    if not match:
+        return ""
+    return _normalize_postcode_token(match.group(1))
 
 
 def _daily_history_path(day_text=""):
@@ -514,7 +532,18 @@ def _build_beacon_payload(status):
     longitude = _safe_float(snapshot.get("longitude"))
     placemark = _reverse_geocode(latitude, longitude)
     address_text = _coerce_address_text(placemark)
-    postcode_bits = _extract_postcode_parts("%s %s" % (placemark.get("ZIP") or "", address_text))
+    raw_zip = ("%s" % (placemark.get("ZIP") or "")).strip()
+    postcode_bits = _extract_postcode_parts("%s %s" % (raw_zip, address_text))
+    if not postcode_bits.get("outcode"):
+        zip_outcode = _extract_outcode_only(raw_zip)
+        if zip_outcode:
+            postcode_bits = {
+                "postcode": "",
+                "outcode": zip_outcode,
+                "sector": "",
+                "precision": "outcode_only",
+                "source": "zip_outcode",
+            }
     now = datetime.datetime.now()
     return {
         "status": status,
@@ -533,6 +562,8 @@ def _build_beacon_payload(status):
         "postcode": postcode_bits["postcode"],
         "outcode": postcode_bits["outcode"],
         "sector": postcode_bits["sector"],
+        "postcode_precision": postcode_bits.get("precision") or "none",
+        "postcode_source": postcode_bits.get("source") or "",
         "placemark": {
             "name": placemark.get("Name") or "",
             "street": placemark.get("Thoroughfare") or "",
@@ -558,7 +589,7 @@ def main():
     print(
         "[traffic_beacon] saved traffic | %s | %s | db=%s | route=%s | %.3fs"
         % (
-            payload.get("postcode") or "no_postcode",
+            payload.get("postcode") or payload.get("outcode") or "no_postcode",
             payload.get("timestamp") or "",
             beacon_db.get("total_entries") or 0,
             route_stats.get("route_key") or "none",
