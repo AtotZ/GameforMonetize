@@ -1,6 +1,6 @@
 {
-  "updated_at": "2026-06-24 14:26:00",
-  "manifest_build": "2026-06-24-manifest-v2",
+  "updated_at": "2026-06-24 14:38:00",
+  "manifest_build": "2026-06-24-manifest-v3",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
@@ -18,17 +18,17 @@
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-24-updater-hash-skip-v10",
-      "script_build": "2026-06-24-updater-v10",
-      "bytes": 15417,
-      "content_sha1": "1d157ce844b955241122ee4ffd1ed6c1383a76ff"
+      "version_comment": "2026-06-24-updater-persistent-console-v11",
+      "script_build": "2026-06-24-updater-v11",
+      "bytes": 15948,
+      "content_sha1": "c361f247ad5bef8746e53170b7e4b4dc96690a20"
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
-      "version_comment": "2026-06-24-private-data-upload-fast-cache-v4",
-      "script_build": "2026-06-24-private-upload-v4",
-      "bytes": 16113,
-      "content_sha1": "02c8257077fef5f904fb5ea0c13e78c547bf9fa3"
+      "version_comment": "2026-06-24-private-data-upload-persistent-console-v5",
+      "script_build": "2026-06-24-private-upload-v5",
+      "bytes": 16650,
+      "content_sha1": "748069c54d350fa8eac3199d6536602c2e70a8af"
     }
   }
 }

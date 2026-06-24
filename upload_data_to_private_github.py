@@ -1,7 +1,7 @@
 import base64
 import datetime
 import hashlib
-# version: 2026-06-24-private-data-upload-fast-cache-v4
+# version: 2026-06-24-private-data-upload-persistent-console-v5
 import json
 import os
 import time
@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-private-upload-v4"
+SCRIPT_BUILD = "2026-06-24-private-upload-v5"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -34,6 +34,7 @@ CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_private_sync_config.json")
 EXAMPLE_CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_private_sync_config.example.json")
 STATUS_PATH = os.path.join(SCRIPT_DIR, "github_private_upload_status.json")
 CACHE_PATH = os.path.join(SCRIPT_DIR, "github_private_upload_cache.json")
+CONSOLE_LOG_PATH = os.path.join(SCRIPT_DIR, "pythonista_console.log")
 TOKEN_FILE_CANDIDATES = [
     os.path.join(SCRIPT_DIR, "github_private_sync_token.txt"),
     os.path.join(SCRIPT_DIR, "Secrets.txt"),
@@ -92,6 +93,20 @@ EXAMPLE_CONFIG = {
 
 def _timestamp():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _append_console_log(message):
+    try:
+        with open(CONSOLE_LOG_PATH, "a", encoding="utf-8") as handle:
+            handle.write("%s\n" % message)
+    except Exception:
+        pass
+
+
+def _log(message):
+    text = "%s" % (message or "")
+    print(text)
+    _append_console_log(text)
 
 
 def _read_invocation_context():
@@ -405,6 +420,7 @@ def _upload_manifest(config, manifest):
 
 def main():
     started = time.perf_counter()
+    _log("[private-upload] session start | %s | %s" % (_timestamp(), SCRIPT_BUILD))
     config = _load_config()
     cache_payload = _load_cache(config)
     invocation_context = _read_invocation_context()
@@ -430,7 +446,7 @@ def main():
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     _write_json(STATUS_PATH, status)
-    print(
+    _log(
         "[private-upload] uploaded=%d skipped=%d missing=%d too_large=%d repo=%s/%s"
         % (
             len([item for item in results if item.get("status") == "uploaded"]),
@@ -441,6 +457,7 @@ def main():
             config["repo"],
         )
     )
+    _log("[private-upload] session end | %.3fs" % (time.perf_counter() - started))
 
 
 if __name__ == "__main__":
@@ -457,6 +474,6 @@ if __name__ == "__main__":
             _write_json(STATUS_PATH, status)
         except Exception:
             pass
-        print("[private-upload] failed: %s" % exc)
+        _log("[private-upload] failed: %s" % exc)
         raise SystemExit(1)
     raise SystemExit(0)

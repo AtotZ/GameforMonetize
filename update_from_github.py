@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-24-updater-hash-skip-v10
+# version: 2026-06-24-updater-persistent-console-v11
 import json
 import os
 import re
@@ -10,7 +10,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-updater-v10"
+SCRIPT_BUILD = "2026-06-24-updater-v11"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -79,6 +79,7 @@ STATUS_PATH = os.path.join(SCRIPT_DIR, "update_from_github_status.json")
 PRIVATE_SYNC_CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_private_sync_config.json")
 PRIVATE_UPLOAD_STATUS_PATH = os.path.join(SCRIPT_DIR, "github_private_upload_status.json")
 PRIVATE_UPLOAD_SCRIPT_PATH = os.path.join(SCRIPT_DIR, "upload_data_to_private_github.py")
+CONSOLE_LOG_PATH = os.path.join(SCRIPT_DIR, "pythonista_console.log")
 
 FILE_MAP = [
     {
@@ -106,6 +107,20 @@ FILE_MAP = [
 
 def _timestamp():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _append_console_log(message):
+    try:
+        with open(CONSOLE_LOG_PATH, "a", encoding="utf-8") as handle:
+            handle.write("%s\n" % message)
+    except Exception:
+        pass
+
+
+def _log(message):
+    text = "%s" % (message or "")
+    print(text)
+    _append_console_log(text)
 
 
 def _download_text(url):
@@ -368,6 +383,7 @@ def _update_one_file(item, manifest_payload):
 
 def main():
     started = time.perf_counter()
+    _log("===== updater session start | %s | %s =====" % (_timestamp(), SCRIPT_BUILD))
     manifest_payload = _download_manifest()
     results = []
     for item in FILE_MAP:
@@ -401,9 +417,9 @@ def main():
     }
     _write_status(payload)
 
-    print("[updater] Checked %d file(s) in %s" % (len(results), SCRIPT_DIR))
+    _log("[updater] Checked %d file(s) in %s" % (len(results), SCRIPT_DIR))
     for result in results:
-        print(
+        _log(
             "[updater] %s -> %s | %s | %d bytes"
             % (
                 result["remote_name"],
@@ -414,7 +430,7 @@ def main():
         )
     if private_upload_result.get("ok"):
         upload_status = private_upload_result.get("status") or {}
-        print(
+        _log(
             "[updater] private upload ok | uploaded=%s | at=%s"
             % (
                 len(upload_status.get("results") or []),
@@ -422,7 +438,8 @@ def main():
             )
         )
     else:
-        print("[updater] private upload failed: %s" % (private_upload_result.get("error") or "unknown"))
+        _log("[updater] private upload failed: %s" % (private_upload_result.get("error") or "unknown"))
+    _log("[updater] session end | %.3fs" % (time.perf_counter() - started))
 
 
 if __name__ == "__main__":
@@ -440,6 +457,6 @@ if __name__ == "__main__":
             _write_status(payload)
         except Exception:
             pass
-        print("[updater] failed: %s" % exc)
+        _log("[updater] failed: %s" % exc)
         raise SystemExit(1)
     raise SystemExit(0)
