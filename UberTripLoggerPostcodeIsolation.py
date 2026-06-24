@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-24-postcode-isolation-daily-history-v15
+# version: 2026-06-24-postcode-isolation-quarter-hour-v16
 import hashlib
 import json
 import os
@@ -939,7 +939,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-24-postcode-daily-history-v15"
+SCRIPT_BUILD = "2026-06-24-postcode-quarter-hour-v16"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1435,6 +1435,8 @@ DB_GREEN_RECENT_MAX_DAYS = 21
 DB_GREEN_MEDIUM_MIN_SAMPLES_FRESH = 4
 DB_RED_TIME_SCORE_MIN = 2
 DB_RED_FRESH_MIN_SAMPLES = 3
+DB_FINE_BUCKET_MINUTES = 15
+DB_FINE_BUCKET_NEIGHBOR_WEIGHT = 0.6
 
 
 def _load_traffic_beacon_db():
@@ -1515,6 +1517,14 @@ def _bucket_time_leaf(bucket, time_bucket):
     return leaf if isinstance(leaf, dict) else {}
 
 
+def _bucket_fine_time_leaf(bucket, bucket_key):
+    if not isinstance(bucket, dict):
+        return {}
+    leaves = bucket.get("time_windows_15m") or {}
+    leaf = leaves.get(bucket_key) or {}
+    return leaf if isinstance(leaf, dict) else {}
+
+
 def _parse_local_timestamp(value):
     text = ("%s" % (value or "")).strip()
     if not text:
@@ -1531,6 +1541,64 @@ def _days_since_timestamp(value, now_dt):
         return None
     delta = now_dt - parsed
     return max(0.0, delta.total_seconds() / 86400.0)
+
+
+def _fine_bucket_start(now_dt):
+    minute_floor = (now_dt.minute // DB_FINE_BUCKET_MINUTES) * DB_FINE_BUCKET_MINUTES
+    return now_dt.replace(minute=minute_floor, second=0, microsecond=0)
+
+
+def _fine_bucket_key(dt_obj):
+    prefix = "weekday" if dt_obj.weekday() < 5 else "weekend"
+    return "%s-%02d:%02d" % (prefix, dt_obj.hour, dt_obj.minute)
+
+
+def _fine_bucket_neighbor_keys(now_dt):
+    start_dt = _fine_bucket_start(now_dt)
+    return [
+        (_fine_bucket_key(start_dt), 1.0),
+        (_fine_bucket_key(start_dt - datetime.timedelta(minutes=DB_FINE_BUCKET_MINUTES)), DB_FINE_BUCKET_NEIGHBOR_WEIGHT),
+        (_fine_bucket_key(start_dt + datetime.timedelta(minutes=DB_FINE_BUCKET_MINUTES)), DB_FINE_BUCKET_NEIGHBOR_WEIGHT),
+    ]
+
+
+def _leaf_rank(leaf):
+    return CONFIDENCE_RANK.get(("%s" % ((leaf or {}).get("confidence") or "")).lower(), 0)
+
+
+def _weighted_fine_bucket_metrics(bucket, now_dt):
+    weighted_score = 0.0
+    weighted_samples = 0.0
+    best_confidence = "low"
+    best_rank = 0
+    latest_seen = ""
+    latest_dt = None
+    matched = []
+
+    for bucket_key, weight in _fine_bucket_neighbor_keys(now_dt):
+        leaf = _bucket_fine_time_leaf(bucket, bucket_key)
+        if not leaf:
+            continue
+        matched.append(bucket_key)
+        weighted_score += float(leaf.get("net_score") or 0.0) * weight
+        weighted_samples += float(leaf.get("samples") or 0.0) * weight
+        rank = _leaf_rank(leaf)
+        if rank > best_rank:
+            best_rank = rank
+            best_confidence = leaf.get("confidence") or "low"
+        seen_text = leaf.get("last_seen") or ""
+        seen_dt = _parse_local_timestamp(seen_text)
+        if seen_dt and (latest_dt is None or seen_dt > latest_dt):
+            latest_dt = seen_dt
+            latest_seen = seen_text
+
+    return {
+        "score": round(weighted_score, 2),
+        "samples": round(weighted_samples, 2),
+        "confidence": best_confidence,
+        "last_seen": latest_seen,
+        "matched_buckets": matched,
+    }
 
 
 def _green_time_bucket_gate(score, samples, confidence, last_seen, now_dt):
@@ -1592,23 +1660,42 @@ def _traffic_db_verdict(parsed, now_dt=None):
     if nearby_labels:
         summary += " [%s]" % ",".join(nearby_labels[:4])
 
-    outcode_time_leaf = _bucket_time_leaf(counts["exact_outcode_bucket"], current_time_bucket)
-    sector_time_leaf = _bucket_time_leaf(counts["exact_sector_bucket"], current_time_bucket)
-    outcode_time_score = int(outcode_time_leaf.get("net_score") or 0)
-    sector_time_score = int(sector_time_leaf.get("net_score") or 0)
-    outcode_time_samples = int(outcode_time_leaf.get("samples") or 0)
-    sector_time_samples = int(sector_time_leaf.get("samples") or 0)
-    outcode_time_confidence = outcode_time_leaf.get("confidence") or "low"
-    sector_time_confidence = sector_time_leaf.get("confidence") or "low"
-    outcode_time_last_seen = outcode_time_leaf.get("last_seen") or ""
-    sector_time_last_seen = sector_time_leaf.get("last_seen") or ""
+    outcode_time = _weighted_fine_bucket_metrics(counts["exact_outcode_bucket"], now_dt)
+    sector_time = _weighted_fine_bucket_metrics(counts["exact_sector_bucket"], now_dt)
+    if not outcode_time["matched_buckets"] and not sector_time["matched_buckets"]:
+        outcode_time_leaf = _bucket_time_leaf(counts["exact_outcode_bucket"], current_time_bucket)
+        sector_time_leaf = _bucket_time_leaf(counts["exact_sector_bucket"], current_time_bucket)
+        outcode_time = {
+            "score": float(outcode_time_leaf.get("net_score") or 0.0),
+            "samples": float(outcode_time_leaf.get("samples") or 0.0),
+            "confidence": outcode_time_leaf.get("confidence") or "low",
+            "last_seen": outcode_time_leaf.get("last_seen") or "",
+            "matched_buckets": [current_time_bucket] if outcode_time_leaf else [],
+        }
+        sector_time = {
+            "score": float(sector_time_leaf.get("net_score") or 0.0),
+            "samples": float(sector_time_leaf.get("samples") or 0.0),
+            "confidence": sector_time_leaf.get("confidence") or "low",
+            "last_seen": sector_time_leaf.get("last_seen") or "",
+            "matched_buckets": [current_time_bucket] if sector_time_leaf else [],
+        }
+    outcode_time_score = float(outcode_time["score"])
+    sector_time_score = float(sector_time["score"])
+    outcode_time_samples = float(outcode_time["samples"])
+    sector_time_samples = float(sector_time["samples"])
+    outcode_time_confidence = outcode_time["confidence"]
+    sector_time_confidence = sector_time["confidence"]
+    outcode_time_last_seen = outcode_time["last_seen"]
+    sector_time_last_seen = sector_time["last_seen"]
     best_time_score = min(outcode_time_score, sector_time_score)
     best_time_samples = max(outcode_time_samples, sector_time_samples)
     best_time_confidence = sector_time_confidence
     best_time_last_seen = sector_time_last_seen
+    best_time_match = sector_time["matched_buckets"]
     if outcode_time_score <= sector_time_score:
         best_time_confidence = outcode_time_confidence
         best_time_last_seen = outcode_time_last_seen
+        best_time_match = outcode_time["matched_buckets"]
     green_ok, green_gate_reason, green_age_days = _green_time_bucket_gate(
         best_time_score,
         best_time_samples,
@@ -1620,10 +1707,12 @@ def _traffic_db_verdict(parsed, now_dt=None):
     best_positive_samples = sector_time_samples
     best_positive_confidence = sector_time_confidence
     best_positive_last_seen = sector_time_last_seen
+    best_positive_match = sector_time["matched_buckets"]
     if outcode_time_score >= sector_time_score:
         best_positive_samples = outcode_time_samples
         best_positive_confidence = outcode_time_confidence
         best_positive_last_seen = outcode_time_last_seen
+        best_positive_match = outcode_time["matched_buckets"]
     red_signal_ok, red_gate_reason, red_age_days = _positive_time_bucket_gate(
         best_positive_score,
         best_positive_samples,
@@ -1656,6 +1745,7 @@ def _traffic_db_verdict(parsed, now_dt=None):
         verdict["time_bucket_last_seen"] = best_positive_last_seen
         verdict["time_bucket_age_days"] = round((red_age_days if red_age_days is not None else green_age_days) or 0.0, 2)
         verdict["time_bucket_gate"] = red_gate_reason if status == "RED" else (green_gate_reason if green_ok else red_gate_reason)
+        verdict["time_bucket_matches"] = best_positive_match if status == "RED" else best_time_match
         return verdict
     if green_ok:
         verdict = _traffic_verdict_payload(
@@ -1676,6 +1766,7 @@ def _traffic_db_verdict(parsed, now_dt=None):
         verdict["time_bucket_last_seen"] = best_time_last_seen
         verdict["time_bucket_age_days"] = round(green_age_days or 0.0, 2)
         verdict["time_bucket_gate"] = green_gate_reason
+        verdict["time_bucket_matches"] = best_time_match
         return verdict
 
     if exact_total >= TRAP_EXACT_AMBER_MIN or nearby_total >= TRAP_NEARBY_AMBER_MIN:
@@ -1696,6 +1787,7 @@ def _traffic_db_verdict(parsed, now_dt=None):
         verdict["time_bucket_last_seen"] = best_positive_last_seen
         verdict["time_bucket_age_days"] = round(red_age_days or 0.0, 2)
         verdict["time_bucket_gate"] = red_gate_reason
+        verdict["time_bucket_matches"] = best_positive_match
         return verdict
 
     return None

@@ -1,4 +1,4 @@
-# version: 2026-06-24-traffic-beacon-partial-outcode-v7
+# version: 2026-06-24-traffic-beacon-quarter-hour-v8
 import datetime
 import glob
 import json
@@ -26,6 +26,7 @@ MAX_HISTORY_ITEMS = 2000
 ACTIVE_OFFER_MAX_AGE_SECONDS = 6 * 60 * 60
 CONFIDENCE_MEDIUM_MIN_SAMPLES = 3
 CONFIDENCE_HIGH_MIN_SAMPLES = 8
+TRAFFIC_FINE_BUCKET_MINUTES = 15
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
@@ -167,6 +168,14 @@ def _time_bucket_name_from_timestamp(timestamp):
     return "weekend_evening"
 
 
+def _fine_time_bucket_key(dt_obj):
+    if not dt_obj:
+        dt_obj = datetime.datetime.now()
+    minute_floor = (dt_obj.minute // TRAFFIC_FINE_BUCKET_MINUTES) * TRAFFIC_FINE_BUCKET_MINUTES
+    prefix = "weekday" if dt_obj.weekday() < 5 else "weekend"
+    return "%s-%02d:%02d" % (prefix, dt_obj.hour, minute_floor)
+
+
 def _confidence_label(samples):
     value = int(samples or 0)
     if value >= CONFIDENCE_HIGH_MIN_SAMPLES:
@@ -185,6 +194,7 @@ def _empty_counter(with_time_buckets=True):
         "confidence": "low",
         "last_seen": "",
         "time_buckets": {} if with_time_buckets else None,
+        "time_windows_15m": {} if with_time_buckets else None,
     }
 
 
@@ -198,8 +208,20 @@ def _bump_counter(bucket, status, timestamp):
     bucket["confidence"] = _confidence_label(bucket["samples"])
     bucket["last_seen"] = timestamp or bucket.get("last_seen") or ""
     if isinstance(bucket.get("time_buckets"), dict):
-        time_bucket = _time_bucket_name_from_timestamp(timestamp)
-        leaf = bucket["time_buckets"].setdefault(time_bucket, _empty_counter(with_time_buckets=False))
+        coarse_bucket = _time_bucket_name_from_timestamp(timestamp)
+        leaf = bucket["time_buckets"].setdefault(coarse_bucket, _empty_counter(with_time_buckets=False))
+        if status == "traffic":
+            leaf["traffic_count"] = int(leaf.get("traffic_count") or 0) + 1
+        else:
+            leaf["no_traffic_count"] = int(leaf.get("no_traffic_count") or 0) + 1
+        leaf["net_score"] = int(leaf.get("traffic_count") or 0) - int(leaf.get("no_traffic_count") or 0)
+        leaf["samples"] = int(leaf.get("samples") or 0) + 1
+        leaf["confidence"] = _confidence_label(leaf["samples"])
+        leaf["last_seen"] = timestamp or leaf.get("last_seen") or ""
+    if isinstance(bucket.get("time_windows_15m"), dict):
+        dt_obj = _parse_timestamp(timestamp)
+        fine_bucket = _fine_time_bucket_key(dt_obj)
+        leaf = bucket["time_windows_15m"].setdefault(fine_bucket, _empty_counter(with_time_buckets=False))
         if status == "traffic":
             leaf["traffic_count"] = int(leaf.get("traffic_count") or 0) + 1
         else:
@@ -428,6 +450,7 @@ def _route_bucket(active_offer):
         "beacon_outcodes": {},
         "beacon_sectors": {},
         "time_buckets": {},
+        "time_windows_15m": {},
     }
 
 
@@ -457,8 +480,19 @@ def _update_route_db(active_offer, beacon_payload):
     bucket["confidence"] = _confidence_label(bucket["samples"])
     bucket["last_seen"] = beacon_payload.get("timestamp") or bucket.get("last_seen") or ""
     bucket["last_offer_timestamp"] = active_offer.get("timestamp") or bucket.get("last_offer_timestamp") or ""
-    time_bucket = _time_bucket_name_from_timestamp(beacon_payload.get("timestamp") or "")
-    time_leaf = bucket["time_buckets"].setdefault(time_bucket, _empty_counter(with_time_buckets=False))
+    dt_obj = _parse_timestamp(beacon_payload.get("timestamp") or "")
+    coarse_bucket = _time_bucket_name_from_timestamp(beacon_payload.get("timestamp") or "")
+    time_leaf = bucket["time_buckets"].setdefault(coarse_bucket, _empty_counter(with_time_buckets=False))
+    if status == "traffic":
+        time_leaf["traffic_count"] = int(time_leaf.get("traffic_count") or 0) + 1
+    else:
+        time_leaf["no_traffic_count"] = int(time_leaf.get("no_traffic_count") or 0) + 1
+    time_leaf["net_score"] = int(time_leaf.get("traffic_count") or 0) - int(time_leaf.get("no_traffic_count") or 0)
+    time_leaf["samples"] = int(time_leaf.get("samples") or 0) + 1
+    time_leaf["confidence"] = _confidence_label(time_leaf["samples"])
+    time_leaf["last_seen"] = beacon_payload.get("timestamp") or time_leaf.get("last_seen") or ""
+    fine_bucket = _fine_time_bucket_key(dt_obj)
+    time_leaf = bucket["time_windows_15m"].setdefault(fine_bucket, _empty_counter(with_time_buckets=False))
     if status == "traffic":
         time_leaf["traffic_count"] = int(time_leaf.get("traffic_count") or 0) + 1
     else:
