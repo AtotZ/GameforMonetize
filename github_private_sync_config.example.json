@@ -1,0 +1,47 @@
+{
+  "owner": "AtotZ",
+  "repo": "YOUR_PRIVATE_DATA_REPO",
+  "branch": "main",
+  "token": "github_pat_your_fine_grained_token_here",
+  "remote_root": "pythonista-data",
+  "commit_message_prefix": "Pythonista data sync",
+  "commit_user_name": "",
+  "commit_user_email": "",
+  "files": [
+    {
+      "label": "active_offer",
+      "local_rel_path": "TestSubjextData/offers/active_offer.json",
+      "remote_rel_path": "offers/active_offer.json"
+    },
+    {
+      "label": "active_offer_history",
+      "local_rel_path": "TestSubjextData/offers/active_offer_history.jsonl",
+      "remote_rel_path": "offers/active_offer_history.jsonl"
+    },
+    {
+      "label": "offer_latest_debug",
+      "local_rel_path": "TestSubjextData/offers/TripLog-OnisAI-PostcodeIsolation-latest.json",
+      "remote_rel_path": "offers/TripLog-OnisAI-PostcodeIsolation-latest.json"
+    },
+    {
+      "label": "traffic_latest",
+      "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-latest.json",
+      "remote_rel_path": "traffic/TrafficBeacon-latest.json"
+    },
+    {
+      "label": "traffic_history",
+      "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-history.json",
+      "remote_rel_path": "traffic/TrafficBeacon-history.json"
+    },
+    {
+      "label": "traffic_db",
+      "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-db.json",
+      "remote_rel_path": "traffic/TrafficBeacon-db.json"
+    },
+    {
+      "label": "route_db",
+      "local_rel_path": "TestSubjextData/traffic/TrafficRoute-db.json",
+      "remote_rel_path": "traffic/TrafficRoute-db.json"
+    }
+  ]
+}

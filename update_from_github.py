@@ -1,12 +1,12 @@
 import datetime
-# version: 2026-06-23-updater-selfupdate-v2
+# version: 2026-06-23-updater-private-upload-v3
 import json
 import os
 import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-23-updater-v2"
+SCRIPT_BUILD = "2026-06-23-updater-v3"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 
@@ -40,6 +40,11 @@ FILE_MAP = [
         "label": "update_from_github",
         "remote_name": "update_from_github.py",
         "local_name": "update_from_github.py",
+    },
+    {
+        "label": "upload_data_to_private_github",
+        "remote_name": "upload_data_to_private_github.py",
+        "local_name": "upload_data_to_private_github.py",
     },
 ]
 
