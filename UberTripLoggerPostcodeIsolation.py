@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v12
+# version: 2026-06-23-postcode-isolation-trapdb-v13
 import hashlib
 import json
 import os
@@ -72,6 +72,10 @@ if True:
         r"\b([A-Z]{1,2}[0-9IZ]{1,2}[A-Z]?)\s*([0-9OIZ][A-Z]{2})\b",
         re.IGNORECASE,
     )
+    UK_PC_SECTOR_TERMINAL_RE = re.compile(
+        r"\b([A-Z]{1,2}[0-9IZ]{1,2}[A-Z]?)\s*([0-9OIZ])\b",
+        re.IGNORECASE,
+    )
     COUNTRY_TOKENS = [" GB", " UK", ",GB", ",UK", ", Gb", ", Uk"]
     VALID_OUTWARD_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?$")
     VALID_INWARD_RE = re.compile(r"^\d[A-Z]{2}$")
@@ -79,6 +83,10 @@ if True:
     POSTCODE_OUTWARD_LOOSE_RE = re.compile(r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\b", re.IGNORECASE)
     POSTCODE_FULL_LOOSE_RE = re.compile(
         r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9OIZ][A-Z]{2})\b",
+        re.IGNORECASE,
+    )
+    POSTCODE_SECTOR_LOOSE_RE = re.compile(
+        r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9OIZ])\b",
         re.IGNORECASE,
     )
     SECTION_MARKERS_RE = re.compile(
@@ -199,7 +207,7 @@ if True:
             if candidate and candidate not in candidates:
                 candidates.append(candidate)
         if candidates:
-            if raw[-1:] in ("O", "I", "Z", "S", "B", "Q", "L"):
+            if raw[-1:] in ("O", "I", "Z", "Q", "L"):
                 digit_tail = [candidate for candidate in candidates if candidate[-1:].isdigit()]
                 if digit_tail:
                     return digit_tail[0]
@@ -225,6 +233,9 @@ if True:
         full = _extract_full_postcode(text)
         if full:
             return full.split()[0]
+        partial_sector = _extract_partial_sector(text)
+        if partial_sector:
+            return partial_sector.split()[0]
         cleaned = _fix_postcode_ocr("%s" % (text or ""))
         candidates = []
         for match in UK_OUTCODE_RE.finditer(cleaned):
@@ -233,11 +244,25 @@ if True:
                 candidates.append(normalized)
         return candidates[-1] if candidates else ""
 
+    def _extract_partial_sector(text):
+        line = _fix_postcode_ocr("%s" % (text or ""))
+        match = UK_PC_SECTOR_TERMINAL_RE.search(line)
+        if not match:
+            return ""
+        outward = _normalize_postcode_outward_token(match.group(1))
+        inward_digit = _normalize_postcode_digit_char(match.group(2))
+        if outward and inward_digit:
+            return "%s %s" % (outward, inward_digit)
+        return ""
+
     def _extract_sector(text):
         full = _extract_full_postcode(text)
         if full:
             outward, inward = full.split()
             return "%s %s" % (outward, inward[0])
+        partial_sector = _extract_partial_sector(text)
+        if partial_sector:
+            return partial_sector
         return ""
 
     def _normalize_address_postcode_text(text):
@@ -245,6 +270,10 @@ if True:
         full = _extract_full_postcode(value)
         if full:
             repaired = POSTCODE_FULL_LOOSE_RE.sub(full, value, count=1)
+            return re.sub(r"\s+", " ", repaired).strip()
+        partial_sector = _extract_partial_sector(value)
+        if partial_sector:
+            repaired = POSTCODE_SECTOR_LOOSE_RE.sub(partial_sector, value, count=1)
             return re.sub(r"\s+", " ", repaired).strip()
         outcode = _extract_outcode(value)
         if outcode:
@@ -651,6 +680,9 @@ if True:
         postcode = UK_PC_RE.search(line) or UK_PC_TERMINAL_RE.search(line)
         if postcode:
             return line[: postcode.end()].strip().rstrip(" ,.;-")
+        postcode_sector = UK_PC_SECTOR_TERMINAL_RE.search(line)
+        if postcode_sector:
+            return line[: postcode_sector.end()].strip().rstrip(" ,.;-")
         for token in COUNTRY_TOKENS:
             index = line.find(token)
             if index != -1:
