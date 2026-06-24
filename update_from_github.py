@@ -1,14 +1,15 @@
 import datetime
-# version: 2026-06-23-updater-private-upload-inline-v5
+# version: 2026-06-23-updater-status-versions-v6
 import json
 import os
+import re
 import runpy
 import sys
 import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-23-updater-v5"
+SCRIPT_BUILD = "2026-06-23-updater-v6"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 DEFAULT_PRIVATE_SYNC_CONFIG = {
@@ -128,6 +129,16 @@ def _write_status(payload):
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
+def _extract_version_from_text(text):
+    value = "%s" % (text or "")
+    version_match = re.search(r"^\s*#\s*version:\s*(.+?)\s*$", value, re.MULTILINE)
+    build_match = re.search(r'^\s*SCRIPT_BUILD\s*=\s*["\'](.+?)["\']\s*$', value, re.MULTILINE)
+    return {
+        "version_comment": (version_match.group(1).strip() if version_match else ""),
+        "script_build": (build_match.group(1).strip() if build_match else ""),
+    }
+
+
 def _extract_token_from_argv():
     for raw_arg in sys.argv[1:]:
         arg = ("%s" % (raw_arg or "")).strip()
@@ -203,10 +214,29 @@ def _run_private_uploader():
     return result
 
 
+def _summarize_private_upload(result):
+    summary = {
+        "ok": bool(result.get("ok")),
+        "ran": bool(result.get("ran")),
+    }
+    status_payload = result.get("status") or {}
+    if status_payload:
+        summary["script_build"] = status_payload.get("script_build") or ""
+        summary["timestamp"] = status_payload.get("timestamp") or ""
+        summary["repo"] = status_payload.get("repo") or ""
+        summary["uploaded_count"] = len(status_payload.get("results") or [])
+    if result.get("error"):
+        summary["error"] = result.get("error")
+    if "exit_code" in result:
+        summary["exit_code"] = result.get("exit_code")
+    return summary
+
+
 def _update_one_file(item):
     url = "%s/%s" % (REPO_RAW_ROOT, item["remote_name"])
     target_path = os.path.join(SCRIPT_DIR, item["local_name"])
     source_text = _download_text(url)
+    version_info = _extract_version_from_text(source_text)
     if "404: Not Found" in source_text and len(source_text.strip()) <= 20:
         raise RuntimeError("GitHub returned 404 for %s" % item["remote_name"])
     if "import " not in source_text and "def " not in source_text:
@@ -217,7 +247,10 @@ def _update_one_file(item):
         "remote_name": item["remote_name"],
         "local_name": item["local_name"],
         "target_path": target_path,
+        "download_url": url,
         "bytes": len(source_text.encode("utf-8")),
+        "version_comment": version_info["version_comment"],
+        "script_build": version_info["script_build"],
     }
 
 
@@ -235,8 +268,17 @@ def main():
         "script_build": SCRIPT_BUILD,
         "script_dir": SCRIPT_DIR,
         "files": results,
+        "files_summary": {
+            result["local_name"]: {
+                "bytes": result["bytes"],
+                "version_comment": result["version_comment"],
+                "script_build": result["script_build"],
+            }
+            for result in results
+        },
         "private_sync_bootstrap": private_sync_bootstrap,
         "private_upload": private_upload_result,
+        "private_upload_summary": _summarize_private_upload(private_upload_result),
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     _write_status(payload)
