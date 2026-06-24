@@ -1,5 +1,5 @@
 import datetime
-# version: 2026-06-24-updater-fast-sync-summary-v8
+# version: 2026-06-24-updater-manifest-skip-v9
 import json
 import os
 import re
@@ -9,8 +9,9 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-updater-v8"
+SCRIPT_BUILD = "2026-06-24-updater-v9"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
+MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 DEFAULT_PRIVATE_SYNC_CONFIG = {
     "owner": "AtotZ",
@@ -139,6 +140,17 @@ def _extract_version_from_text(text):
     }
 
 
+def _read_local_version(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return _extract_version_from_text(handle.read())
+    except Exception:
+        return {
+            "version_comment": "",
+            "script_build": "",
+        }
+
+
 def _extract_token_from_argv():
     for raw_arg in sys.argv[1:]:
         arg = ("%s" % (raw_arg or "")).strip()
@@ -162,6 +174,26 @@ def _read_existing_json(path):
     except Exception:
         pass
     return {}
+
+
+def _download_manifest():
+    url = "%s/%s" % (REPO_RAW_ROOT, MANIFEST_REMOTE_NAME)
+    try:
+        payload = json.loads(_download_text(url))
+    except Exception:
+        return {}
+    files = payload.get("files")
+    if not isinstance(files, dict):
+        return {}
+    return payload
+
+
+def _manifest_entry_for(item, manifest_payload):
+    if not manifest_payload:
+        return {}
+    files = manifest_payload.get("files") or {}
+    entry = files.get(item["local_name"])
+    return entry if isinstance(entry, dict) else {}
 
 
 def _bootstrap_private_sync_config():
@@ -255,9 +287,36 @@ def _summarize_private_upload(result):
     return summary
 
 
-def _update_one_file(item):
+def _update_one_file(item, manifest_payload):
     url = "%s/%s" % (REPO_RAW_ROOT, item["remote_name"])
     target_path = os.path.join(SCRIPT_DIR, item["local_name"])
+    local_version = _read_local_version(target_path)
+    manifest_entry = _manifest_entry_for(item, manifest_payload)
+    remote_build = ("%s" % (manifest_entry.get("script_build") or "")).strip()
+    remote_version_comment = ("%s" % (manifest_entry.get("version_comment") or "")).strip()
+    if (
+        os.path.exists(target_path)
+        and (
+            (remote_build and local_version["script_build"] == remote_build and local_version["script_build"] != "")
+            or (
+                (not remote_build)
+                and remote_version_comment
+                and local_version["version_comment"] == remote_version_comment
+                and local_version["version_comment"] != ""
+            )
+        )
+    ):
+        return {
+            "label": item["label"],
+            "remote_name": item["remote_name"],
+            "local_name": item["local_name"],
+            "target_path": target_path,
+            "download_url": url,
+            "bytes": int(manifest_entry.get("bytes") or 0),
+            "version_comment": remote_version_comment or local_version["version_comment"],
+            "script_build": remote_build,
+            "status": "skipped_unchanged",
+        }
     source_text = _download_text(url)
     version_info = _extract_version_from_text(source_text)
     if "404: Not Found" in source_text and len(source_text.strip()) <= 20:
@@ -274,14 +333,16 @@ def _update_one_file(item):
         "bytes": len(source_text.encode("utf-8")),
         "version_comment": version_info["version_comment"],
         "script_build": version_info["script_build"],
+        "status": "downloaded",
     }
 
 
 def main():
     started = time.perf_counter()
+    manifest_payload = _download_manifest()
     results = []
     for item in FILE_MAP:
-        results.append(_update_one_file(item))
+        results.append(_update_one_file(item, manifest_payload))
     private_sync_bootstrap = _bootstrap_private_sync_config()
     private_upload_result = _run_private_uploader()
 
@@ -290,12 +351,15 @@ def main():
         "timestamp": _timestamp(),
         "script_build": SCRIPT_BUILD,
         "script_dir": SCRIPT_DIR,
+        "manifest_used": bool(manifest_payload),
+        "manifest_build": ("%s" % (manifest_payload.get("manifest_build") or "")).strip() if manifest_payload else "",
         "files": results,
         "files_summary": {
             result["local_name"]: {
                 "bytes": result["bytes"],
                 "version_comment": result["version_comment"],
                 "script_build": result["script_build"],
+                "status": result.get("status") or "",
             }
             for result in results
         },
@@ -306,11 +370,16 @@ def main():
     }
     _write_status(payload)
 
-    print("[updater] Updated %d file(s) in %s" % (len(results), SCRIPT_DIR))
+    print("[updater] Checked %d file(s) in %s" % (len(results), SCRIPT_DIR))
     for result in results:
         print(
-            "[updater] %s -> %s (%d bytes)"
-            % (result["remote_name"], result["local_name"], result["bytes"])
+            "[updater] %s -> %s | %s | %d bytes"
+            % (
+                result["remote_name"],
+                result["local_name"],
+                result.get("status") or "unknown",
+                result["bytes"],
+            )
         )
     if private_upload_result.get("ok"):
         upload_status = private_upload_result.get("status") or {}

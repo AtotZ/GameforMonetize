@@ -1,0 +1,30 @@
+{
+  "updated_at": "2026-06-24 14:15:00",
+  "manifest_build": "2026-06-24-manifest-v1",
+  "files": {
+    "UberTripLogger.py": {
+      "remote_name": "UberTripLoggerPostcodeIsolation.py",
+      "version_comment": "2026-06-23-postcode-isolation-trapdb-v13",
+      "script_build": "",
+      "bytes": 112182
+    },
+    "traffic_beacon.py": {
+      "remote_name": "traffic_beacon.py",
+      "version_comment": "2026-06-23-traffic-beacon-db-v4",
+      "script_build": "",
+      "bytes": 16415
+    },
+    "update_from_github.py": {
+      "remote_name": "update_from_github.py",
+      "version_comment": "2026-06-24-updater-manifest-skip-v9",
+      "script_build": "2026-06-24-updater-v9",
+      "bytes": 14178
+    },
+    "upload_data_to_private_github.py": {
+      "remote_name": "upload_data_to_private_github.py",
+      "version_comment": "2026-06-24-private-data-upload-fast-cache-v4",
+      "script_build": "2026-06-24-private-upload-v4",
+      "bytes": 16113
+    }
+  }
+}
