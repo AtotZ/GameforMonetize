@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-24-updater-persistent-console-trim-v12
+# version: 2026-06-24-updater-upload-summary-fix-v13
 import json
 import os
 import re
@@ -10,7 +10,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-updater-v12"
+SCRIPT_BUILD = "2026-06-24-updater-v13"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -308,12 +308,21 @@ def _summarize_private_upload(result):
     }
     status_payload = result.get("status") or {}
     if status_payload:
+        upload_results = status_payload.get("results") or []
         summary["script_build"] = status_payload.get("script_build") or ""
         summary["timestamp"] = status_payload.get("timestamp") or ""
         summary["repo"] = status_payload.get("repo") or ""
-        summary["uploaded_count"] = len(status_payload.get("results") or [])
+        summary["uploaded_count"] = len(
+            [item for item in upload_results if item.get("status") == "uploaded"]
+        )
         summary["skipped_unchanged_count"] = len(
-            [item for item in (status_payload.get("results") or []) if item.get("status") == "skipped_unchanged"]
+            [item for item in upload_results if item.get("status") == "skipped_unchanged"]
+        )
+        summary["missing_count"] = len(
+            [item for item in upload_results if item.get("status") == "missing_local"]
+        )
+        summary["too_large_count"] = len(
+            [item for item in upload_results if item.get("status") == "too_large"]
         )
         summary["manifest_uploaded"] = bool(status_payload.get("manifest_uploaded"))
     if result.get("error"):
@@ -437,12 +446,15 @@ def main():
             )
         )
     if private_upload_result.get("ok"):
-        upload_status = private_upload_result.get("status") or {}
+        upload_summary = _summarize_private_upload(private_upload_result)
         _log(
-            "[updater] private upload ok | uploaded=%s | at=%s"
+            "[updater] private upload ok | uploaded=%s skipped=%s missing=%s too_large=%s | at=%s"
             % (
-                len(upload_status.get("results") or []),
-                upload_status.get("timestamp") or "",
+                upload_summary.get("uploaded_count", 0),
+                upload_summary.get("skipped_unchanged_count", 0),
+                upload_summary.get("missing_count", 0),
+                upload_summary.get("too_large_count", 0),
+                upload_summary.get("timestamp") or "",
             )
         )
     else:

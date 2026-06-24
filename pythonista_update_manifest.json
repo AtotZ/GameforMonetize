@@ -1,6 +1,6 @@
 {
-  "updated_at": "2026-06-24 14:49:00",
-  "manifest_build": "2026-06-24-manifest-v4",
+  "updated_at": "2026-06-24 15:02:00",
+  "manifest_build": "2026-06-24-manifest-v5",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
@@ -18,10 +18,10 @@
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-24-updater-persistent-console-trim-v12",
-      "script_build": "2026-06-24-updater-v12",
-      "bytes": 16350,
-      "content_sha1": "5755c3b608de8be52f80d7e3c2f798ea127c49d5"
+      "version_comment": "2026-06-24-updater-upload-summary-fix-v13",
+      "script_build": "2026-06-24-updater-v13",
+      "bytes": 16935,
+      "content_sha1": "69dc0477236d141c9fff594db44cd58566ec54a0"
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
