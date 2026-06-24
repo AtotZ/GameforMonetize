@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v10
+# version: 2026-06-23-postcode-isolation-trapdb-v12
 import hashlib
 import json
 import os
@@ -76,6 +76,11 @@ if True:
     VALID_OUTWARD_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?$")
     VALID_INWARD_RE = re.compile(r"^\d[A-Z]{2}$")
     POSTCODE_OUTWARD_PATTERNS = ("A9", "A9A", "A99", "AA9", "AA9A", "AA99")
+    POSTCODE_OUTWARD_LOOSE_RE = re.compile(r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\b", re.IGNORECASE)
+    POSTCODE_FULL_LOOSE_RE = re.compile(
+        r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9OIZ][A-Z]{2})\b",
+        re.IGNORECASE,
+    )
     SECTION_MARKERS_RE = re.compile(
         r"^(Pickup:|Trip:|Price|Star Rating|Vehicle Type|Uber Price|Distance:|Trip Time Estimate|Pickup Distance|Pickup Estimate|STATUS|FLAGGED|Traffic Level|EST\.? HOLIDAY PAY)",
         re.IGNORECASE,
@@ -186,10 +191,19 @@ if True:
         raw = re.sub(r"[^A-Z0-9]", "", ("%s" % (token or "")).upper())
         if not raw:
             return ""
+        if VALID_OUTWARD_RE.match(raw) and not any(ch in "IOZLSBQ" for ch in raw):
+            return raw
+        candidates = []
         for pattern in POSTCODE_OUTWARD_PATTERNS:
             candidate = _apply_outward_pattern(raw, pattern)
-            if candidate:
-                return candidate
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+        if candidates:
+            if raw[-1:] in ("O", "I", "Z", "S", "B", "Q", "L"):
+                digit_tail = [candidate for candidate in candidates if candidate[-1:].isdigit()]
+                if digit_tail:
+                    return digit_tail[0]
+            return candidates[0]
         fixed = _fix_postcode_digit_confusions(raw)
         if VALID_OUTWARD_RE.match(fixed):
             return fixed
@@ -225,6 +239,18 @@ if True:
             outward, inward = full.split()
             return "%s %s" % (outward, inward[0])
         return ""
+
+    def _normalize_address_postcode_text(text):
+        value = "%s" % (text or "")
+        full = _extract_full_postcode(value)
+        if full:
+            repaired = POSTCODE_FULL_LOOSE_RE.sub(full, value, count=1)
+            return re.sub(r"\s+", " ", repaired).strip()
+        outcode = _extract_outcode(value)
+        if outcode:
+            repaired = POSTCODE_OUTWARD_LOOSE_RE.sub(outcode, value, count=1)
+            return re.sub(r"\s+", " ", repaired).strip()
+        return re.sub(r"\s+", " ", value).strip()
 
     def _fix_postcode_ocr(text):
         if not text:
@@ -668,6 +694,7 @@ if True:
         line = re.sub(r"^[|lI]\s+", "", line)
         line = re.sub(r"\bPI\b", "Pl", line)
         line = re.sub(r"\bWIG\b", "W1G", line)
+        line = _normalize_address_postcode_text(line)
         return line.rstrip(" ,.;-")
 
     def _is_likely_address_line(line):
@@ -771,7 +798,19 @@ if True:
                 break
             if UK_PC_RE.search(cleaned) or any(token.strip() in cleaned for token in COUNTRY_TOKENS):
                 break
-        return re.sub(r"\s+", " ", " ".join(parts)).strip()
+        return _normalize_address_postcode_text(re.sub(r"\s+", " ", " ".join(parts)).strip())
+
+    def _normalize_parsed_address_fields(parsed):
+        normalized = dict(parsed or {})
+        for field_name in ("pickup_address", "dropoff_address"):
+            normalized[field_name] = _normalize_address_postcode_text(normalized.get(field_name) or "")
+        normalized["pickup_postcode"] = _extract_full_postcode(normalized.get("pickup_address") or "")
+        normalized["dropoff_postcode"] = _extract_full_postcode(normalized.get("dropoff_address") or "")
+        normalized["pickup_outcode"] = _extract_outcode(normalized.get("pickup_address") or "")
+        normalized["dropoff_outcode"] = _extract_outcode(normalized.get("dropoff_address") or "")
+        normalized["pickup_sector"] = _extract_sector(normalized.get("pickup_address") or "")
+        normalized["dropoff_sector"] = _extract_sector(normalized.get("dropoff_address") or "")
+        return normalized
 
     def _build_parse_error(parsed):
         missing = []
@@ -843,6 +882,7 @@ if True:
             "surge_text": surge_info["value"] or "N/A",
             "is_reserved": reserved_info["value"] is True,
         }
+        parsed = _normalize_parsed_address_fields(parsed)
         parse_error = _build_parse_error(parsed)
         return {
             "valid": not parse_error,
