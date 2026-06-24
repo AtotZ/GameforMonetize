@@ -1,7 +1,7 @@
 import base64
 import datetime
 import hashlib
-# version: 2026-06-24-private-data-upload-persistent-console-trim-v6
+# version: 2026-06-24-private-data-upload-fast-console-trim-v7
 import json
 import os
 import time
@@ -10,12 +10,13 @@ import urllib.parse
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-private-upload-v6"
+SCRIPT_BUILD = "2026-06-24-private-upload-v7"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 MAX_CONSOLE_LOG_LINES = 400
 TRIMMED_CONSOLE_LOG_LINES = 250
+MAX_CONSOLE_LOG_BYTES = 48 * 1024
 
 
 def _safe_script_dir():
@@ -102,6 +103,8 @@ def _append_console_log(message):
         line = "%s\n" % message
         with open(CONSOLE_LOG_PATH, "a", encoding="utf-8") as handle:
             handle.write(line)
+        if os.path.exists(CONSOLE_LOG_PATH) and os.path.getsize(CONSOLE_LOG_PATH) < MAX_CONSOLE_LOG_BYTES:
+            return
         with open(CONSOLE_LOG_PATH, "r", encoding="utf-8", errors="ignore") as handle:
             lines = handle.readlines()
         if len(lines) > MAX_CONSOLE_LOG_LINES:

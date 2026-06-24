@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-23-postcode-isolation-trapdb-v13
+# version: 2026-06-24-postcode-isolation-ledger-cache-v14
 import hashlib
 import json
 import os
@@ -1024,6 +1024,22 @@ def _save_state(payload):
             json.dump(payload, handle, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+def _normalize_totals_cache(payload):
+    source = payload if isinstance(payload, dict) else {}
+    return {
+        "trip_count": int(source.get("trip_count") or 0),
+        "total_price": round(float(source.get("total_price") or 0.0), 2),
+        "drive_minutes": int(round(float(source.get("drive_minutes") or 0.0))),
+    }
+
+
+def _get_today_totals_cached(state, ledger_path, today_date):
+    cached = state.get("today_totals_cache") or {}
+    if ("%s" % (cached.get("date") or "")).strip() == today_date:
+        return _normalize_totals_cache(cached)
+    return _normalize_totals_cache(_today_totals_from_ledger(ledger_path, today_date))
 
 
 def _ensure_parent_dir(path):
@@ -2451,7 +2467,7 @@ def main():
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
-    totals_before_append = _today_totals_from_ledger(LEDGER_PATH, today_date)
+    totals_before_append = _get_today_totals_cached(state, LEDGER_PATH, today_date)
     trip_number = totals_before_append["trip_count"] + 1
     trip_label = "TRIP %d" % trip_number
     heading = "==== %s ====\n" % now.strftime("%A, %d %B %Y")
@@ -2554,7 +2570,14 @@ def main():
     }
     _write_json(LATEST_JSON_PATH, latest_payload)
 
-    state_payload = {"last_ocr_sha1": ocr_sha1}
+    state_payload = dict(state or {})
+    state_payload["last_ocr_sha1"] = ocr_sha1
+    state_payload["today_totals_cache"] = {
+        "date": today_date,
+        "trip_count": totals_after_append["trip_count"],
+        "total_price": totals_after_append["total_price"],
+        "drive_minutes": totals_after_append["drive_minutes"],
+    }
     if latest_asset is not None:
         state_payload["last_asset_id"] = getattr(latest_asset, "local_id", None)
         state_payload["last_created"] = _created_str(getattr(latest_asset, "creation_date", None))

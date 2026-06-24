@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-24-updater-upload-summary-fix-v13
+# version: 2026-06-24-updater-fast-console-trim-v14
 import json
 import os
 import re
@@ -10,12 +10,13 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-updater-v13"
+SCRIPT_BUILD = "2026-06-24-updater-v14"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 MAX_CONSOLE_LOG_LINES = 400
 TRIMMED_CONSOLE_LOG_LINES = 250
+MAX_CONSOLE_LOG_BYTES = 48 * 1024
 DEFAULT_PRIVATE_SYNC_CONFIG = {
     "owner": "AtotZ",
     "repo": "UploadData",
@@ -116,6 +117,8 @@ def _append_console_log(message):
         line = "%s\n" % message
         with open(CONSOLE_LOG_PATH, "a", encoding="utf-8") as handle:
             handle.write(line)
+        if os.path.exists(CONSOLE_LOG_PATH) and os.path.getsize(CONSOLE_LOG_PATH) < MAX_CONSOLE_LOG_BYTES:
+            return
         with open(CONSOLE_LOG_PATH, "r", encoding="utf-8", errors="ignore") as handle:
             lines = handle.readlines()
         if len(lines) > MAX_CONSOLE_LOG_LINES:
