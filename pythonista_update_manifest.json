@@ -1,34 +1,34 @@
 {
-  "updated_at": "2026-06-24 16:02:00",
-  "manifest_build": "2026-06-24-manifest-v8",
+  "updated_at": "2026-06-24 16:25:00",
+  "manifest_build": "2026-06-24-manifest-v9",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-24-postcode-isolation-ledger-cache-v14",
-      "script_build": "",
-      "bytes": 113125,
-      "content_sha1": "b9416bf6fe92d1a5a97d68f00d6da99f209aecb9"
+      "version_comment": "2026-06-24-postcode-isolation-daily-history-v15",
+      "script_build": "2026-06-24-postcode-daily-history-v15",
+      "bytes": 113367,
+      "content_sha1": "16b7f1fe726dfdbc06839fb8f7f7878f06845cd2"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
-      "version_comment": "2026-06-24-traffic-beacon-incremental-db-v5",
+      "version_comment": "2026-06-24-traffic-beacon-daily-history-v6",
       "script_build": "",
-      "bytes": 19871,
-      "content_sha1": "45676102ce9ca75da3641bec99639342068f6208"
+      "bytes": 20760,
+      "content_sha1": "9126e245cbb43f9c23a2988135554d19da57bc07"
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-24-updater-skip-upload-on-code-change-v15",
-      "script_build": "2026-06-24-updater-v15",
-      "bytes": 17735,
-      "content_sha1": "cc3b6e290d933182c098fe7ac596205f4d74caf9"
+      "version_comment": "2026-06-24-updater-daily-history-bootstrap-v16",
+      "script_build": "2026-06-24-updater-v16",
+      "bytes": 17713,
+      "content_sha1": "2b663a43da7d83dcdc96ae51989e466826fa58c1"
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
-      "version_comment": "2026-06-24-private-data-upload-sha-cache-v8",
-      "script_build": "2026-06-24-private-upload-v8",
-      "bytes": 17666,
-      "content_sha1": "4aa6e106608b32c13a8421fa406f6e8d5dd3bfdc"
+      "version_comment": "2026-06-24-private-data-upload-daily-history-v9",
+      "script_build": "2026-06-24-private-upload-v9",
+      "bytes": 20709,
+      "content_sha1": "f604e76cc7d1d87eece79ba8fb30cc9f7e506292"
     }
   }
 }

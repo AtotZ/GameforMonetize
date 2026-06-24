@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-24-updater-skip-upload-on-code-change-v15
+# version: 2026-06-24-updater-daily-history-bootstrap-v16
 import json
 import os
 import re
@@ -10,7 +10,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-updater-v15"
+SCRIPT_BUILD = "2026-06-24-updater-v16"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -34,8 +34,8 @@ DEFAULT_PRIVATE_SYNC_CONFIG = {
         },
         {
             "label": "active_offer_history",
-            "local_rel_path": "TestSubjextData/offers/active_offer_history.jsonl",
-            "remote_rel_path": "offers/active_offer_history.jsonl",
+            "local_rel_glob": "TestSubjextData/offers/history/*-active_offer_history.jsonl",
+            "remote_rel_dir": "offers/history",
         },
         {
             "label": "offer_latest_debug",
@@ -49,8 +49,8 @@ DEFAULT_PRIVATE_SYNC_CONFIG = {
         },
         {
             "label": "traffic_history",
-            "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-history.json",
-            "remote_rel_path": "traffic/TrafficBeacon-history.json",
+            "local_rel_glob": "TestSubjextData/traffic/history/*-TrafficBeacon-history.jsonl",
+            "remote_rel_dir": "traffic/history",
         },
         {
             "label": "traffic_db",

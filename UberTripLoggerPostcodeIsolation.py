@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-24-postcode-isolation-ledger-cache-v14
+# version: 2026-06-24-postcode-isolation-daily-history-v15
 import hashlib
 import json
 import os
@@ -939,7 +939,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-22-postcode-branch"
+SCRIPT_BUILD = "2026-06-24-postcode-daily-history-v15"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -968,11 +968,11 @@ ROOT_DIR = os.path.expanduser("~/Documents")
 DATA_ROOT_DIR = os.path.join(ROOT_DIR, "TestSubjextData")
 TRAFFIC_DATA_DIR = os.path.join(DATA_ROOT_DIR, "traffic")
 OFFERS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "offers")
+OFFERS_HISTORY_DIR = os.path.join(OFFERS_DATA_DIR, "history")
 LOGS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "logs")
 DEBUG_DATA_DIR = os.path.join(DATA_ROOT_DIR, "debug")
 TRAFFIC_BEACON_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
 ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
-OFFERS_HISTORY_JSONL_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer_history.jsonl")
 TEXT_LOG_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
 LEDGER_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
 LATEST_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation-latest.json")
@@ -1081,6 +1081,11 @@ def _append_text(path, text):
         _maybe_fsync(handle)
 
 
+def _daily_jsonl_path(base_dir, stem, day_text):
+    day = ("%s" % (day_text or "")).strip() or datetime.datetime.now().strftime("%Y-%m-%d")
+    return os.path.join(base_dir, "%s-%s.jsonl" % (day, stem))
+
+
 def _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_str, ocr_sha1):
     payload = {
         "timestamp": now_str,
@@ -1114,7 +1119,7 @@ def _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_s
         "ocr_sha1": ocr_sha1 or "",
     }
     _write_json(ACTIVE_OFFER_JSON_PATH, payload)
-    _append_jsonl(OFFERS_HISTORY_JSONL_PATH, payload)
+    _append_jsonl(_daily_jsonl_path(OFFERS_HISTORY_DIR, "active_offer_history", now_str[:10]), payload)
     return payload
 
 

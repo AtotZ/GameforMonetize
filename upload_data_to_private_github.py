@@ -1,7 +1,8 @@
 import base64
 import datetime
+import glob
 import hashlib
-# version: 2026-06-24-private-data-upload-sha-cache-v8
+# version: 2026-06-24-private-data-upload-daily-history-v9
 import json
 import os
 import time
@@ -10,7 +11,7 @@ import urllib.parse
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-private-upload-v8"
+SCRIPT_BUILD = "2026-06-24-private-upload-v9"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -51,8 +52,8 @@ DEFAULT_FILE_SPECS = [
     },
     {
         "label": "active_offer_history",
-        "local_rel_path": "TestSubjextData/offers/active_offer_history.jsonl",
-        "remote_rel_path": "offers/active_offer_history.jsonl",
+        "local_rel_glob": "TestSubjextData/offers/history/*-active_offer_history.jsonl",
+        "remote_rel_dir": "offers/history",
     },
     {
         "label": "offer_latest_debug",
@@ -66,8 +67,8 @@ DEFAULT_FILE_SPECS = [
     },
     {
         "label": "traffic_history",
-        "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-history.json",
-        "remote_rel_path": "traffic/TrafficBeacon-history.json",
+        "local_rel_glob": "TestSubjextData/traffic/history/*-TrafficBeacon-history.jsonl",
+        "remote_rel_dir": "traffic/history",
     },
     {
         "label": "traffic_db",
@@ -171,6 +172,62 @@ def _normalize_rel_path(value):
     return ("%s" % (value or "")).replace("\\", "/").strip().strip("/")
 
 
+def _copy_file_spec(item):
+    return {key: value for key, value in (item or {}).items()}
+
+
+def _normalize_file_specs(file_specs):
+    normalized = []
+    seen_labels = set()
+    for item in file_specs or []:
+        if not isinstance(item, dict):
+            continue
+        candidate = _copy_file_spec(item)
+        local_path = _normalize_rel_path(candidate.get("local_rel_path") or "")
+        remote_path = _normalize_rel_path(candidate.get("remote_rel_path") or "")
+        if local_path in (
+            "TestSubjextData/offers/active_offer_history.jsonl",
+            "TestSubjextData/traffic/TrafficBeacon-history.json",
+        ):
+            continue
+        if remote_path in (
+            "offers/active_offer_history.jsonl",
+            "traffic/TrafficBeacon-history.json",
+        ):
+            continue
+        normalized.append(candidate)
+        label = ("%s" % (candidate.get("label") or "")).strip()
+        if label:
+            seen_labels.add(label)
+    for item in DEFAULT_FILE_SPECS:
+        label = ("%s" % (item.get("label") or "")).strip()
+        if label and label in seen_labels:
+            continue
+        normalized.append(_copy_file_spec(item))
+    return normalized
+
+
+def _expand_file_specs(file_specs):
+    expanded = []
+    for item in file_specs or []:
+        local_glob = _normalize_rel_path(item.get("local_rel_glob") or "")
+        remote_dir = _normalize_rel_path(item.get("remote_rel_dir") or "")
+        if local_glob and remote_dir:
+            pattern = os.path.join(ROOT_DIR, *local_glob.split("/"))
+            for match in sorted([path for path in glob.glob(pattern) if os.path.isfile(path)]):
+                rel_local = os.path.relpath(match, ROOT_DIR).replace("\\", "/")
+                expanded.append(
+                    {
+                        "label": ("%s" % (item.get("label") or os.path.basename(match))).strip(),
+                        "local_rel_path": rel_local,
+                        "remote_rel_path": "%s/%s" % (remote_dir, os.path.basename(match)),
+                    }
+                )
+            continue
+        expanded.append(_copy_file_spec(item))
+    return expanded
+
+
 def _read_bootstrap_token():
     for path in TOKEN_FILE_CANDIDATES:
         token = _read_first_line(path)
@@ -212,7 +269,8 @@ def _load_config():
         raise RuntimeError("github_private_sync_config.json must include owner, repo, and token.")
     files = payload.get("files")
     if not isinstance(files, list) or not files:
-        files = DEFAULT_FILE_SPECS
+        files = [_copy_file_spec(item) for item in DEFAULT_FILE_SPECS]
+    files = _expand_file_specs(_normalize_file_specs(files))
     return {
         "owner": owner,
         "repo": repo,
@@ -323,12 +381,31 @@ def _upload_one(config, item, cache_payload):
     if not local_rel_path or not remote_rel_path:
         raise RuntimeError("Every file entry must include local_rel_path and remote_rel_path.")
     local_path = os.path.join(ROOT_DIR, *local_rel_path.split("/"))
+    remote_path = remote_rel_path
+    if config["remote_root"]:
+        remote_path = "%s/%s" % (config["remote_root"], remote_rel_path)
     if not os.path.exists(local_path):
         return {
             "label": item.get("label") or remote_rel_path,
             "local_rel_path": local_rel_path,
-            "remote_rel_path": remote_rel_path,
+            "remote_rel_path": remote_path,
             "status": "missing_local",
+        }
+    stat_result = os.stat(local_path)
+    cached = cache_payload["files"].get(remote_path) or {}
+    if (
+        cached.get("local_mtime_ns") == int(getattr(stat_result, "st_mtime_ns", 0))
+        and int(cached.get("bytes") or 0) == int(stat_result.st_size)
+        and ("%s" % (cached.get("content_sha1") or "")).strip()
+    ):
+        return {
+            "label": item.get("label") or remote_rel_path,
+            "local_rel_path": local_rel_path,
+            "remote_rel_path": remote_path,
+            "status": "skipped_unchanged",
+            "bytes": int(stat_result.st_size),
+            "content_sha1": ("%s" % (cached.get("content_sha1") or "")).strip(),
+            "skip_reason": "local_stat_cache",
         }
     raw = open(local_path, "rb").read()
     if len(raw) > MAX_UPLOAD_BYTES:
@@ -339,9 +416,6 @@ def _upload_one(config, item, cache_payload):
             "status": "too_large",
             "bytes": len(raw),
         }
-    remote_path = remote_rel_path
-    if config["remote_root"]:
-        remote_path = "%s/%s" % (config["remote_root"], remote_rel_path)
     content_sha1 = _sha1_bytes(raw)
     cached = cache_payload["files"].get(remote_path) or {}
     if (
@@ -386,6 +460,7 @@ def _upload_one(config, item, cache_payload):
         "content_sha1": content_sha1,
         "bytes": len(raw),
         "remote_sha": remote_sha,
+        "local_mtime_ns": int(getattr(stat_result, "st_mtime_ns", 0)),
         "last_uploaded_at": _timestamp(),
         "label": item.get("label") or remote_rel_path,
     }

@@ -1,5 +1,6 @@
-# version: 2026-06-24-traffic-beacon-incremental-db-v5
+# version: 2026-06-24-traffic-beacon-daily-history-v6
 import datetime
+import glob
 import json
 import os
 import re
@@ -16,8 +17,8 @@ ROOT_DIR = os.path.expanduser("~/Documents")
 DATA_ROOT_DIR = os.path.join(ROOT_DIR, "TestSubjextData")
 TRAFFIC_DATA_DIR = os.path.join(DATA_ROOT_DIR, "traffic")
 OFFERS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "offers")
+HISTORY_DATA_DIR = os.path.join(TRAFFIC_DATA_DIR, "history")
 LATEST_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-latest.json")
-HISTORY_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-history.json")
 DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
 ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
 ROUTE_DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
@@ -59,15 +60,34 @@ def _extract_postcode_parts(text):
     return {"postcode": postcode, "outcode": outcode, "sector": sector}
 
 
+def _daily_history_path(day_text=""):
+    day = ("%s" % (day_text or "")).strip() or datetime.datetime.now().strftime("%Y-%m-%d")
+    return os.path.join(HISTORY_DATA_DIR, "%s-TrafficBeacon-history.jsonl" % day)
+
+
+def _history_paths():
+    pattern = os.path.join(HISTORY_DATA_DIR, "*-TrafficBeacon-history.jsonl")
+    return sorted([path for path in glob.glob(pattern) if os.path.isfile(path)])
+
+
 def _load_history():
-    try:
-        with open(HISTORY_JSON_PATH, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        if isinstance(payload, list):
-            return payload
-    except Exception:
-        pass
-    return []
+    history = []
+    for path in _history_paths():
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                for raw_line in handle:
+                    raw_line = raw_line.strip()
+                    if not raw_line:
+                        continue
+                    try:
+                        history.append(json.loads(raw_line))
+                    except Exception:
+                        continue
+        except Exception:
+            continue
+    if len(history) > MAX_HISTORY_ITEMS:
+        history = history[-MAX_HISTORY_ITEMS:]
+    return history
 
 
 def _write_json(path, payload):
@@ -90,12 +110,13 @@ def _load_json_dict(path):
 
 
 def _append_history(entry):
-    history = _load_history()
-    history.append(entry)
-    if len(history) > MAX_HISTORY_ITEMS:
-        history = history[-MAX_HISTORY_ITEMS:]
-    _write_json(HISTORY_JSON_PATH, history)
-    return history
+    path = _daily_history_path((entry or {}).get("timestamp", "")[:10])
+    directory = os.path.dirname(path)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return path
 
 
 def _parse_outcode_family(outcode):
