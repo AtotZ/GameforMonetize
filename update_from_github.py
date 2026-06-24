@@ -1,13 +1,14 @@
 import datetime
-# version: 2026-06-23-updater-private-upload-bootstrap-v4
+# version: 2026-06-23-updater-private-upload-inline-v5
 import json
 import os
+import runpy
 import sys
 import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-23-updater-v4"
+SCRIPT_BUILD = "2026-06-23-updater-v5"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 DEFAULT_PRIVATE_SYNC_CONFIG = {
@@ -73,6 +74,8 @@ def _safe_script_dir():
 SCRIPT_DIR = _safe_script_dir()
 STATUS_PATH = os.path.join(SCRIPT_DIR, "update_from_github_status.json")
 PRIVATE_SYNC_CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_private_sync_config.json")
+PRIVATE_UPLOAD_STATUS_PATH = os.path.join(SCRIPT_DIR, "github_private_upload_status.json")
+PRIVATE_UPLOAD_SCRIPT_PATH = os.path.join(SCRIPT_DIR, "upload_data_to_private_github.py")
 
 FILE_MAP = [
     {
@@ -168,6 +171,38 @@ def _bootstrap_private_sync_config():
     }
 
 
+def _run_private_uploader():
+    if not os.path.exists(PRIVATE_UPLOAD_SCRIPT_PATH):
+        return {
+            "ok": False,
+            "ran": False,
+            "error": "Missing upload_data_to_private_github.py",
+        }
+
+    result = {
+        "ok": False,
+        "ran": True,
+        "script_path": PRIVATE_UPLOAD_SCRIPT_PATH,
+    }
+    try:
+        runpy.run_path(PRIVATE_UPLOAD_SCRIPT_PATH, run_name="__main__")
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 0
+        result["exit_code"] = code
+        if code not in (0, None):
+            result["error"] = "Uploader exited with code %s" % code
+    except Exception as exc:
+        result["error"] = "%s" % exc
+
+    status_payload = _read_existing_json(PRIVATE_UPLOAD_STATUS_PATH)
+    if status_payload:
+        result["status"] = status_payload
+        result["ok"] = bool(status_payload.get("ok"))
+    else:
+        result["ok"] = "error" not in result
+    return result
+
+
 def _update_one_file(item):
     url = "%s/%s" % (REPO_RAW_ROOT, item["remote_name"])
     target_path = os.path.join(SCRIPT_DIR, item["local_name"])
@@ -192,14 +227,16 @@ def main():
     for item in FILE_MAP:
         results.append(_update_one_file(item))
     private_sync_bootstrap = _bootstrap_private_sync_config()
+    private_upload_result = _run_private_uploader()
 
     payload = {
-        "ok": True,
+        "ok": bool(private_upload_result.get("ok")),
         "timestamp": _timestamp(),
         "script_build": SCRIPT_BUILD,
         "script_dir": SCRIPT_DIR,
         "files": results,
         "private_sync_bootstrap": private_sync_bootstrap,
+        "private_upload": private_upload_result,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     _write_status(payload)
@@ -210,6 +247,17 @@ def main():
             "[updater] %s -> %s (%d bytes)"
             % (result["remote_name"], result["local_name"], result["bytes"])
         )
+    if private_upload_result.get("ok"):
+        upload_status = private_upload_result.get("status") or {}
+        print(
+            "[updater] private upload ok | uploaded=%s | at=%s"
+            % (
+                len(upload_status.get("results") or []),
+                upload_status.get("timestamp") or "",
+            )
+        )
+    else:
+        print("[updater] private upload failed: %s" % (private_upload_result.get("error") or "unknown"))
 
 
 if __name__ == "__main__":
