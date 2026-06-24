@@ -1,5 +1,6 @@
 import datetime
-# version: 2026-06-24-updater-manifest-skip-v9
+import hashlib
+# version: 2026-06-24-updater-hash-skip-v10
 import json
 import os
 import re
@@ -9,7 +10,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-updater-v9"
+SCRIPT_BUILD = "2026-06-24-updater-v10"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -130,6 +131,10 @@ def _write_status(payload):
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
+def _sha1_bytes(raw):
+    return hashlib.sha1(raw).hexdigest()
+
+
 def _extract_version_from_text(text):
     value = "%s" % (text or "")
     version_match = re.search(r"^\s*#\s*version:\s*(.+?)\s*$", value, re.MULTILINE)
@@ -149,6 +154,14 @@ def _read_local_version(path):
             "version_comment": "",
             "script_build": "",
         }
+
+
+def _read_local_file_sha1(path):
+    try:
+        with open(path, "rb") as handle:
+            return _sha1_bytes(handle.read())
+    except Exception:
+        return ""
 
 
 def _extract_token_from_argv():
@@ -291,20 +304,32 @@ def _update_one_file(item, manifest_payload):
     url = "%s/%s" % (REPO_RAW_ROOT, item["remote_name"])
     target_path = os.path.join(SCRIPT_DIR, item["local_name"])
     local_version = _read_local_version(target_path)
+    local_sha1 = _read_local_file_sha1(target_path)
     manifest_entry = _manifest_entry_for(item, manifest_payload)
     remote_build = ("%s" % (manifest_entry.get("script_build") or "")).strip()
     remote_version_comment = ("%s" % (manifest_entry.get("version_comment") or "")).strip()
+    remote_sha1 = ("%s" % (manifest_entry.get("content_sha1") or "")).strip()
+    skip_reason = ""
+    if os.path.exists(target_path) and remote_sha1 and local_sha1 == remote_sha1:
+        skip_reason = "content_sha1"
+    elif (
+        os.path.exists(target_path)
+        and remote_build
+        and local_version["script_build"] == remote_build
+        and local_version["script_build"] != ""
+    ):
+        skip_reason = "script_build"
+    elif (
+        os.path.exists(target_path)
+        and (not remote_build)
+        and remote_version_comment
+        and local_version["version_comment"] == remote_version_comment
+        and local_version["version_comment"] != ""
+    ):
+        skip_reason = "version_comment"
     if (
         os.path.exists(target_path)
-        and (
-            (remote_build and local_version["script_build"] == remote_build and local_version["script_build"] != "")
-            or (
-                (not remote_build)
-                and remote_version_comment
-                and local_version["version_comment"] == remote_version_comment
-                and local_version["version_comment"] != ""
-            )
-        )
+        and skip_reason
     ):
         return {
             "label": item["label"],
@@ -315,7 +340,9 @@ def _update_one_file(item, manifest_payload):
             "bytes": int(manifest_entry.get("bytes") or 0),
             "version_comment": remote_version_comment or local_version["version_comment"],
             "script_build": remote_build,
+            "content_sha1": remote_sha1 or local_sha1,
             "status": "skipped_unchanged",
+            "skip_reason": skip_reason,
         }
     source_text = _download_text(url)
     version_info = _extract_version_from_text(source_text)
@@ -323,6 +350,7 @@ def _update_one_file(item, manifest_payload):
         raise RuntimeError("GitHub returned 404 for %s" % item["remote_name"])
     if "import " not in source_text and "def " not in source_text:
         raise RuntimeError("Downloaded content for %s does not look like Python code." % item["remote_name"])
+    content_sha1 = _sha1_bytes(source_text.encode("utf-8"))
     _write_text(target_path, source_text)
     return {
         "label": item["label"],
@@ -333,6 +361,7 @@ def _update_one_file(item, manifest_payload):
         "bytes": len(source_text.encode("utf-8")),
         "version_comment": version_info["version_comment"],
         "script_build": version_info["script_build"],
+        "content_sha1": content_sha1,
         "status": "downloaded",
     }
 
@@ -359,7 +388,9 @@ def main():
                 "bytes": result["bytes"],
                 "version_comment": result["version_comment"],
                 "script_build": result["script_build"],
+                "content_sha1": result.get("content_sha1") or "",
                 "status": result.get("status") or "",
+                "skip_reason": result.get("skip_reason") or "",
             }
             for result in results
         },
