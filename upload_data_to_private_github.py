@@ -1,6 +1,6 @@
 import base64
 import datetime
-# version: 2026-06-23-private-data-upload-v1
+# version: 2026-06-23-private-data-upload-bootstrap-v2
 import json
 import os
 import time
@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-23-private-upload-v1"
+SCRIPT_BUILD = "2026-06-23-private-upload-v2"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -32,6 +32,10 @@ DATA_ROOT_DIR = os.path.join(ROOT_DIR, "TestSubjextData")
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_private_sync_config.json")
 EXAMPLE_CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_private_sync_config.example.json")
 STATUS_PATH = os.path.join(SCRIPT_DIR, "github_private_upload_status.json")
+TOKEN_FILE_CANDIDATES = [
+    os.path.join(SCRIPT_DIR, "github_private_sync_token.txt"),
+    os.path.join(SCRIPT_DIR, "Secrets.txt"),
+]
 
 DEFAULT_FILE_SPECS = [
     {
@@ -111,12 +115,46 @@ def _write_json(path, payload):
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
+def _read_first_line(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            return ("%s" % (handle.readline() or "")).strip()
+    except Exception:
+        return ""
+
+
 def _normalize_rel_path(value):
     return ("%s" % (value or "")).replace("\\", "/").strip().strip("/")
 
 
+def _read_bootstrap_token():
+    for path in TOKEN_FILE_CANDIDATES:
+        token = _read_first_line(path)
+        if token.startswith("github_pat_") or token.startswith("ghp_"):
+            return token, path
+    return "", ""
+
+
+def _maybe_bootstrap_config_from_token():
+    if os.path.exists(CONFIG_PATH):
+        return None
+    token, source_path = _read_bootstrap_token()
+    if not token:
+        return None
+    payload = dict(EXAMPLE_CONFIG)
+    payload["repo"] = "UploadData"
+    payload["token"] = token
+    _write_json(CONFIG_PATH, payload)
+    return {
+        "config_path": CONFIG_PATH,
+        "token_source": source_path,
+        "repo": "%s/%s" % (payload["owner"], payload["repo"]),
+    }
+
+
 def _load_config():
     _ensure_example_config()
+    bootstrap = _maybe_bootstrap_config_from_token()
     payload = _read_json(CONFIG_PATH)
     if not payload:
         raise RuntimeError(
@@ -141,6 +179,7 @@ def _load_config():
         "commit_user_name": ("%s" % (payload.get("commit_user_name") or "")).strip(),
         "commit_user_email": ("%s" % (payload.get("commit_user_email") or "")).strip(),
         "files": files,
+        "bootstrap": bootstrap,
     }
 
 
@@ -302,6 +341,7 @@ def main():
         "repo": "%s/%s" % (config["owner"], config["repo"]),
         "branch": config["branch"],
         "remote_root": config["remote_root"],
+        "bootstrap": config.get("bootstrap"),
         "results": results,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }

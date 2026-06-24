@@ -1,14 +1,62 @@
 import datetime
-# version: 2026-06-23-updater-private-upload-v3
+# version: 2026-06-23-updater-private-upload-bootstrap-v4
 import json
 import os
+import sys
 import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-23-updater-v3"
+SCRIPT_BUILD = "2026-06-23-updater-v4"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 DOWNLOAD_TIMEOUT_SECONDS = 20
+DEFAULT_PRIVATE_SYNC_CONFIG = {
+    "owner": "AtotZ",
+    "repo": "UploadData",
+    "branch": "main",
+    "token": "",
+    "remote_root": "pythonista-data",
+    "commit_message_prefix": "Pythonista data sync",
+    "commit_user_name": "",
+    "commit_user_email": "",
+    "files": [
+        {
+            "label": "active_offer",
+            "local_rel_path": "TestSubjextData/offers/active_offer.json",
+            "remote_rel_path": "offers/active_offer.json",
+        },
+        {
+            "label": "active_offer_history",
+            "local_rel_path": "TestSubjextData/offers/active_offer_history.jsonl",
+            "remote_rel_path": "offers/active_offer_history.jsonl",
+        },
+        {
+            "label": "offer_latest_debug",
+            "local_rel_path": "TestSubjextData/offers/TripLog-OnisAI-PostcodeIsolation-latest.json",
+            "remote_rel_path": "offers/TripLog-OnisAI-PostcodeIsolation-latest.json",
+        },
+        {
+            "label": "traffic_latest",
+            "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-latest.json",
+            "remote_rel_path": "traffic/TrafficBeacon-latest.json",
+        },
+        {
+            "label": "traffic_history",
+            "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-history.json",
+            "remote_rel_path": "traffic/TrafficBeacon-history.json",
+        },
+        {
+            "label": "traffic_db",
+            "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-db.json",
+            "remote_rel_path": "traffic/TrafficBeacon-db.json",
+        },
+        {
+            "label": "route_db",
+            "local_rel_path": "TestSubjextData/traffic/TrafficRoute-db.json",
+            "remote_rel_path": "traffic/TrafficRoute-db.json",
+        },
+    ],
+}
 
 
 def _safe_script_dir():
@@ -24,6 +72,7 @@ def _safe_script_dir():
 
 SCRIPT_DIR = _safe_script_dir()
 STATUS_PATH = os.path.join(SCRIPT_DIR, "update_from_github_status.json")
+PRIVATE_SYNC_CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_private_sync_config.json")
 
 FILE_MAP = [
     {
@@ -76,6 +125,49 @@ def _write_status(payload):
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
+def _extract_token_from_argv():
+    for raw_arg in sys.argv[1:]:
+        arg = ("%s" % (raw_arg or "")).strip()
+        if not arg:
+            continue
+        if arg.startswith("github_pat_") or arg.startswith("ghp_"):
+            return arg
+        if arg.lower().startswith("token="):
+            candidate = arg.split("=", 1)[1].strip()
+            if candidate.startswith("github_pat_") or candidate.startswith("ghp_"):
+                return candidate
+    return ""
+
+
+def _read_existing_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
+
+
+def _bootstrap_private_sync_config():
+    token = _extract_token_from_argv()
+    if not token:
+        return None
+    payload = _read_existing_json(PRIVATE_SYNC_CONFIG_PATH)
+    merged = dict(DEFAULT_PRIVATE_SYNC_CONFIG)
+    if payload:
+        merged.update(payload)
+    merged["token"] = token
+    with open(PRIVATE_SYNC_CONFIG_PATH, "w", encoding="utf-8") as handle:
+        json.dump(merged, handle, ensure_ascii=False, indent=2)
+    return {
+        "config_path": PRIVATE_SYNC_CONFIG_PATH,
+        "repo": "%s/%s" % (merged["owner"], merged["repo"]),
+        "token_prefix": token[:16],
+    }
+
+
 def _update_one_file(item):
     url = "%s/%s" % (REPO_RAW_ROOT, item["remote_name"])
     target_path = os.path.join(SCRIPT_DIR, item["local_name"])
@@ -99,6 +191,7 @@ def main():
     results = []
     for item in FILE_MAP:
         results.append(_update_one_file(item))
+    private_sync_bootstrap = _bootstrap_private_sync_config()
 
     payload = {
         "ok": True,
@@ -106,6 +199,7 @@ def main():
         "script_build": SCRIPT_BUILD,
         "script_dir": SCRIPT_DIR,
         "files": results,
+        "private_sync_bootstrap": private_sync_bootstrap,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     _write_status(payload)
