@@ -1,5 +1,5 @@
 import datetime
-# version: 2026-06-24-updater-chain-breadcrumb-v7
+# version: 2026-06-24-updater-fast-sync-summary-v8
 import json
 import os
 import re
@@ -9,7 +9,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-updater-v7"
+SCRIPT_BUILD = "2026-06-24-updater-v8"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 DEFAULT_PRIVATE_SYNC_CONFIG = {
@@ -244,6 +244,10 @@ def _summarize_private_upload(result):
         summary["timestamp"] = status_payload.get("timestamp") or ""
         summary["repo"] = status_payload.get("repo") or ""
         summary["uploaded_count"] = len(status_payload.get("results") or [])
+        summary["skipped_unchanged_count"] = len(
+            [item for item in (status_payload.get("results") or []) if item.get("status") == "skipped_unchanged"]
+        )
+        summary["manifest_uploaded"] = bool(status_payload.get("manifest_uploaded"))
     if result.get("error"):
         summary["error"] = result.get("error")
     if "exit_code" in result:

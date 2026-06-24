@@ -1,6 +1,7 @@
 import base64
 import datetime
-# version: 2026-06-24-private-data-upload-chain-breadcrumb-v3
+import hashlib
+# version: 2026-06-24-private-data-upload-fast-cache-v4
 import json
 import os
 import time
@@ -9,7 +10,7 @@ import urllib.parse
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-private-upload-v3"
+SCRIPT_BUILD = "2026-06-24-private-upload-v4"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -32,6 +33,7 @@ DATA_ROOT_DIR = os.path.join(ROOT_DIR, "TestSubjextData")
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_private_sync_config.json")
 EXAMPLE_CONFIG_PATH = os.path.join(SCRIPT_DIR, "github_private_sync_config.example.json")
 STATUS_PATH = os.path.join(SCRIPT_DIR, "github_private_upload_status.json")
+CACHE_PATH = os.path.join(SCRIPT_DIR, "github_private_upload_cache.json")
 TOKEN_FILE_CANDIDATES = [
     os.path.join(SCRIPT_DIR, "github_private_sync_token.txt"),
     os.path.join(SCRIPT_DIR, "Secrets.txt"),
@@ -127,6 +129,10 @@ def _write_json(path, payload):
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
+def _sha1_bytes(raw):
+    return hashlib.sha1(raw).hexdigest()
+
+
 def _read_first_line(path):
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as handle:
@@ -195,6 +201,36 @@ def _load_config():
     }
 
 
+def _repo_signature(config):
+    return "%s/%s@%s|%s" % (
+        config["owner"],
+        config["repo"],
+        config["branch"],
+        config["remote_root"],
+    )
+
+
+def _load_cache(config):
+    payload = _read_json(CACHE_PATH)
+    repo_signature = _repo_signature(config)
+    if payload.get("repo_signature") != repo_signature:
+        return {
+            "repo_signature": repo_signature,
+            "files": {},
+        }
+    files = payload.get("files")
+    if not isinstance(files, dict):
+        files = {}
+    return {
+        "repo_signature": repo_signature,
+        "files": files,
+    }
+
+
+def _save_cache(cache_payload):
+    _write_json(CACHE_PATH, cache_payload)
+
+
 def _api_request(url, token, method="GET", body=None):
     headers = {
         "Accept": "application/vnd.github+json",
@@ -232,7 +268,7 @@ def _get_remote_sha(config, remote_path):
         raise
 
 
-def _upload_one(config, item):
+def _upload_one(config, item, cache_payload):
     local_rel_path = _normalize_rel_path(item.get("local_rel_path") or "")
     remote_rel_path = _normalize_rel_path(item.get("remote_rel_path") or "")
     if not local_rel_path or not remote_rel_path:
@@ -257,6 +293,20 @@ def _upload_one(config, item):
     remote_path = remote_rel_path
     if config["remote_root"]:
         remote_path = "%s/%s" % (config["remote_root"], remote_rel_path)
+    content_sha1 = _sha1_bytes(raw)
+    cached = cache_payload["files"].get(remote_path) or {}
+    if (
+        cached.get("content_sha1") == content_sha1
+        and int(cached.get("bytes") or 0) == len(raw)
+    ):
+        return {
+            "label": item.get("label") or remote_rel_path,
+            "local_rel_path": local_rel_path,
+            "remote_rel_path": remote_path,
+            "status": "skipped_unchanged",
+            "bytes": len(raw),
+            "content_sha1": content_sha1,
+        }
     sha = _get_remote_sha(config, remote_path)
     body = {
         "message": "%s | %s | %s" % (
@@ -284,19 +334,28 @@ def _upload_one(config, item):
     payload = _api_request(url, config["token"], method="PUT", body=body)
     commit = payload.get("commit") or {}
     content = payload.get("content") or {}
-    return {
+    result = {
         "label": item.get("label") or remote_rel_path,
         "local_rel_path": local_rel_path,
         "remote_rel_path": remote_path,
         "status": "uploaded",
         "bytes": len(raw),
+        "content_sha1": content_sha1,
         "sha": ("%s" % (content.get("sha") or "")).strip(),
         "commit_sha": ("%s" % (commit.get("sha") or "")).strip(),
     }
+    cache_payload["files"][remote_path] = {
+        "content_sha1": content_sha1,
+        "bytes": len(raw),
+        "last_uploaded_at": _timestamp(),
+        "label": item.get("label") or remote_rel_path,
+    }
+    return result
 
 
 def _build_manifest(upload_results, invocation_context):
     uploaded = [item for item in upload_results if item.get("status") == "uploaded"]
+    skipped = [item for item in upload_results if item.get("status") == "skipped_unchanged"]
     missing = [item for item in upload_results if item.get("status") == "missing_local"]
     too_large = [item for item in upload_results if item.get("status") == "too_large"]
     return {
@@ -307,9 +366,11 @@ def _build_manifest(upload_results, invocation_context):
         "invoked_started_at": invocation_context.get("invoked_started_at") or "",
         "update_chain_ok": bool(invocation_context.get("update_chain_ok")),
         "uploaded_count": len(uploaded),
+        "skipped_unchanged_count": len(skipped),
         "missing_count": len(missing),
         "too_large_count": len(too_large),
         "uploaded_files": uploaded,
+        "skipped_unchanged_files": skipped,
         "missing_files": missing,
         "too_large_files": too_large,
     }
@@ -345,12 +406,16 @@ def _upload_manifest(config, manifest):
 def main():
     started = time.perf_counter()
     config = _load_config()
+    cache_payload = _load_cache(config)
     invocation_context = _read_invocation_context()
     results = []
     for item in config["files"]:
-        results.append(_upload_one(config, item))
+        results.append(_upload_one(config, item, cache_payload))
     manifest = _build_manifest(results, invocation_context)
-    _upload_manifest(config, manifest)
+    should_upload_manifest = any(item.get("status") != "skipped_unchanged" for item in results)
+    if should_upload_manifest:
+        _upload_manifest(config, manifest)
+    _save_cache(cache_payload)
     status = {
         "ok": True,
         "timestamp": _timestamp(),
@@ -360,14 +425,16 @@ def main():
         "branch": config["branch"],
         "remote_root": config["remote_root"],
         "bootstrap": config.get("bootstrap"),
+        "manifest_uploaded": should_upload_manifest,
         "results": results,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     _write_json(STATUS_PATH, status)
     print(
-        "[private-upload] uploaded=%d missing=%d too_large=%d repo=%s/%s"
+        "[private-upload] uploaded=%d skipped=%d missing=%d too_large=%d repo=%s/%s"
         % (
             len([item for item in results if item.get("status") == "uploaded"]),
+            len([item for item in results if item.get("status") == "skipped_unchanged"]),
             len([item for item in results if item.get("status") == "missing_local"]),
             len([item for item in results if item.get("status") == "too_large"]),
             config["owner"],
