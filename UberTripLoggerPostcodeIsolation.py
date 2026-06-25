@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-25-postcode-isolation-ocr-tighten-v19
+# version: 2026-06-25-postcode-dropoff-priority-v20
 import hashlib
 import json
 import os
@@ -984,7 +984,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-25-postcode-ocr-tighten-v19"
+SCRIPT_BUILD = "2026-06-25-postcode-dropoff-priority-v20"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1947,11 +1947,11 @@ def _traffic_scope_verdict(scope, address_text, outcode, time_bucket):
         return None
 
     if zone_name:
-        if time_bucket in ("early_morning", "evening", "weekend_evening", "pm_shoulder", "weekend_busy"):
+        if time_bucket in ("early_morning", "evening", "weekend_evening"):
             verdict = _traffic_verdict_payload("AMBER", zone_name, scope, "central_edge_caution", time_bucket)
             verdict["source"] = "hardcoded"
             return verdict
-        verdict = _traffic_verdict_payload("RED", zone_name, scope, "central_edge_busy", time_bucket)
+        verdict = _traffic_verdict_payload("AMBER", zone_name, scope, "pickup_central_caution", time_bucket)
         verdict["source"] = "hardcoded"
         return verdict
 
@@ -1961,7 +1961,7 @@ def _traffic_scope_verdict(scope, address_text, outcode, time_bucket):
         return verdict
 
     if _is_red_family_outcode(outcode):
-        verdict = _traffic_verdict_payload("RED", outcode or "Avoid", scope, "north_or_east_pull", time_bucket)
+        verdict = _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "pickup_origin_caution", time_bucket)
         verdict["source"] = "hardcoded"
         return verdict
 
