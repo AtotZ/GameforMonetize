@@ -1,4 +1,4 @@
-# version: 2026-06-24-traffic-beacon-quarter-hour-v8
+# version: 2026-06-25-traffic-beacon-day-aware-v9
 import datetime
 import glob
 import json
@@ -193,12 +193,14 @@ def _empty_counter(with_time_buckets=True):
         "samples": 0,
         "confidence": "low",
         "last_seen": "",
+        "days_seen": {},
         "time_buckets": {} if with_time_buckets else None,
         "time_windows_15m": {} if with_time_buckets else None,
     }
 
 
 def _bump_counter(bucket, status, timestamp):
+    date_key = ("%s" % (timestamp or ""))[:10]
     if status == "traffic":
         bucket["traffic_count"] = int(bucket.get("traffic_count") or 0) + 1
     else:
@@ -207,6 +209,9 @@ def _bump_counter(bucket, status, timestamp):
     bucket["samples"] = int(bucket.get("samples") or 0) + 1
     bucket["confidence"] = _confidence_label(bucket["samples"])
     bucket["last_seen"] = timestamp or bucket.get("last_seen") or ""
+    if date_key:
+        bucket.setdefault("days_seen", {})
+        bucket["days_seen"][date_key] = int(bucket["days_seen"].get(date_key) or 0) + 1
     if isinstance(bucket.get("time_buckets"), dict):
         coarse_bucket = _time_bucket_name_from_timestamp(timestamp)
         leaf = bucket["time_buckets"].setdefault(coarse_bucket, _empty_counter(with_time_buckets=False))
@@ -218,6 +223,9 @@ def _bump_counter(bucket, status, timestamp):
         leaf["samples"] = int(leaf.get("samples") or 0) + 1
         leaf["confidence"] = _confidence_label(leaf["samples"])
         leaf["last_seen"] = timestamp or leaf.get("last_seen") or ""
+        if date_key:
+            leaf.setdefault("days_seen", {})
+            leaf["days_seen"][date_key] = int(leaf["days_seen"].get(date_key) or 0) + 1
     if isinstance(bucket.get("time_windows_15m"), dict):
         dt_obj = _parse_timestamp(timestamp)
         fine_bucket = _fine_time_bucket_key(dt_obj)
@@ -230,6 +238,9 @@ def _bump_counter(bucket, status, timestamp):
         leaf["samples"] = int(leaf.get("samples") or 0) + 1
         leaf["confidence"] = _confidence_label(leaf["samples"])
         leaf["last_seen"] = timestamp or leaf.get("last_seen") or ""
+        if date_key:
+            leaf.setdefault("days_seen", {})
+            leaf["days_seen"][date_key] = int(leaf["days_seen"].get(date_key) or 0) + 1
 
 
 def _build_beacon_db(history):

@@ -1,20 +1,20 @@
 {
-  "updated_at": "2026-06-24 19:10:00",
-  "manifest_build": "2026-06-24-manifest-v11",
+  "updated_at": "2026-06-25 10:02:00",
+  "manifest_build": "2026-06-25-manifest-v12",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-24-postcode-isolation-quarter-hour-v16",
-      "script_build": "2026-06-24-postcode-quarter-hour-v16",
-      "bytes": 117079,
-      "content_sha1": "03b9fa188799b09da20dad83eb27b58e78a0eb40"
+      "version_comment": "2026-06-25-postcode-isolation-day-aware-v17",
+      "script_build": "2026-06-25-postcode-day-aware-v17",
+      "bytes": 116294,
+      "content_sha1": "6a1b9e77f19f1fa2781918b49ca0d8928297e072"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
-      "version_comment": "2026-06-24-traffic-beacon-quarter-hour-v8",
+      "version_comment": "2026-06-25-traffic-beacon-day-aware-v9",
       "script_build": "",
-      "bytes": 23733,
-      "content_sha1": "baa89e70f685c666a9ec79dbc3ac13b3a673ed60"
+      "bytes": 24258,
+      "content_sha1": "1defd5579d37bf0da2bbd0a85602c5e2aa6dca38"
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
