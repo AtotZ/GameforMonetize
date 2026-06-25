@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-25-postcode-isolation-day-aware-v17
+# version: 2026-06-25-postcode-isolation-ocr-tighten-v18
 import hashlib
 import json
 import os
@@ -82,7 +82,7 @@ if True:
     POSTCODE_OUTWARD_PATTERNS = ("A9", "A9A", "A99", "AA9", "AA9A", "AA99")
     POSTCODE_OUTWARD_LOOSE_RE = re.compile(r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\b", re.IGNORECASE)
     POSTCODE_FULL_LOOSE_RE = re.compile(
-        r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9OIZ][A-Z]{2})\b",
+        r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9OIZ][A-Z]{2,4})\b",
         re.IGNORECASE,
     )
     POSTCODE_SECTOR_LOOSE_RE = re.compile(
@@ -143,6 +143,38 @@ if True:
             return ""
         return value[0].replace("I", "1").replace("O", "0").replace("Z", "2")
 
+    POSTCODE_CONFUSABLE_TRANSLATIONS = str.maketrans({
+        "\u0410": "A",  # Cyrillic A
+        "\u0412": "B",  # Cyrillic Ve
+        "\u0421": "C",  # Cyrillic Es
+        "\u0415": "E",  # Cyrillic Ie
+        "\u041d": "H",  # Cyrillic En
+        "\u0406": "I",  # Cyrillic Byelorussian/Ukrainian I
+        "\u041a": "K",  # Cyrillic Ka
+        "\u041c": "M",  # Cyrillic Em
+        "\u041e": "O",  # Cyrillic O
+        "\u0420": "P",  # Cyrillic Er
+        "\u0422": "T",  # Cyrillic Te
+        "\u0425": "X",  # Cyrillic Ha
+        "\u0423": "Y",  # Cyrillic U
+        "\u0430": "A",
+        "\u0432": "B",
+        "\u0441": "C",
+        "\u0435": "E",
+        "\u043d": "H",
+        "\u0456": "I",
+        "\u043a": "K",
+        "\u043c": "M",
+        "\u043e": "O",
+        "\u0440": "P",
+        "\u0442": "T",
+        "\u0445": "X",
+        "\u0443": "Y",
+    })
+
+    def _transliterate_postcode_confusables(text):
+        return ("%s" % (text or "")).translate(POSTCODE_CONFUSABLE_TRANSLATIONS)
+
     def _normalize_postcode_letter_char(ch):
         value = ("%s" % (ch or "")).upper()
         if not value:
@@ -172,9 +204,10 @@ if True:
         )[:1]
 
     def _normalize_postcode_inward_token(token):
-        value = re.sub(r"[^A-Z0-9]", "", ("%s" % (token or "")).upper())
-        if len(value) != 3:
+        value = re.sub(r"[^A-Z0-9]", "", _transliterate_postcode_confusables(token).upper())
+        if len(value) < 3:
             return ""
+        value = value[:3]
         fixed = "%s%s%s" % (
             _normalize_postcode_digit_char(value[0]),
             _normalize_postcode_letter_char(value[1]),
@@ -196,9 +229,11 @@ if True:
         return candidate if VALID_OUTWARD_RE.match(candidate) else ""
 
     def _normalize_postcode_outward_token(token):
-        raw = re.sub(r"[^A-Z0-9]", "", ("%s" % (token or "")).upper())
+        raw = re.sub(r"[^A-Z0-9]", "", _transliterate_postcode_confusables(token).upper())
         if not raw:
             return ""
+        if len(raw) == 3 and raw[0] == "U" and raw[1] in ("8", "B") and raw[2].isdigit():
+            return "UB%s" % raw[2]
         if VALID_OUTWARD_RE.match(raw) and not any(ch in "IOZLSBQ" for ch in raw):
             return raw
         candidates = []
@@ -220,13 +255,21 @@ if True:
 
     def _extract_full_postcode(text):
         line = _fix_postcode_ocr("%s" % (text or ""))
-        match = UK_PC_RE.search(line) or UK_PC_TERMINAL_RE.search(line)
-        if not match:
-            return ""
-        outward = _normalize_postcode_outward_token(match.group(1))
-        inward = _normalize_postcode_inward_token(match.group(2))
-        if outward and inward:
-            return "%s %s" % (outward, inward)
+        for pattern in (
+            UK_PC_RE,
+            UK_PC_TERMINAL_RE,
+            re.compile(
+                r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9OIZ][A-Z]{2,4})\b(?=[^A-Z0-9]*$)",
+                re.IGNORECASE,
+            ),
+        ):
+            match = pattern.search(line)
+            if not match:
+                continue
+            outward = _normalize_postcode_outward_token(match.group(1))
+            inward = _normalize_postcode_inward_token(match.group(2))
+            if outward and inward:
+                return "%s %s" % (outward, inward)
         return ""
 
     def _extract_outcode(text):
@@ -266,7 +309,7 @@ if True:
         return ""
 
     def _normalize_address_postcode_text(text):
-        value = "%s" % (text or "")
+        value = _transliterate_postcode_confusables(text)
         full = _extract_full_postcode(value)
         if full:
             repaired = POSTCODE_FULL_LOOSE_RE.sub(full, value, count=1)
@@ -284,7 +327,8 @@ if True:
     def _fix_postcode_ocr(text):
         if not text:
             return text
-        transliterated = text.replace("\u0417", "3").replace("\u0415", "E").replace("\u041d", "H")
+        transliterated = _transliterate_postcode_confusables(text)
+        transliterated = transliterated.replace("\u0417", "3")
 
         def replace(match):
             outward = _normalize_postcode_outward_token(match.group(1))
@@ -939,7 +983,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-25-postcode-day-aware-v17"
+SCRIPT_BUILD = "2026-06-25-postcode-ocr-tighten-v18"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
