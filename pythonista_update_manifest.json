@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-06-25 11:08:00",
-  "manifest_build": "2026-06-25-manifest-v15",
+  "updated_at": "2026-06-25 11:24:00",
+  "manifest_build": "2026-06-25-manifest-v16",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-25-postcode-dropoff-priority-v20",
-      "script_build": "2026-06-25-postcode-dropoff-priority-v20",
-      "bytes": 117834,
-      "content_sha1": "0d51fd75320247b201d10dfb6e4ae015263676c3"
+      "version_comment": "2026-06-25-dropoff-missing-postcode-v21",
+      "script_build": "2026-06-25-dropoff-missing-postcode-v21",
+      "bytes": 118274,
+      "content_sha1": "4e5885835d129c21456d935bf8d447b038ed5aa6"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",

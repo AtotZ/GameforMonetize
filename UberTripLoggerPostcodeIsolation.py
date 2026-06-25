@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-25-postcode-dropoff-priority-v20
+# version: 2026-06-25-dropoff-missing-postcode-v21
 import hashlib
 import json
 import os
@@ -984,7 +984,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-25-postcode-dropoff-priority-v20"
+SCRIPT_BUILD = "2026-06-25-dropoff-missing-postcode-v21"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1971,21 +1971,28 @@ def _traffic_scope_verdict(scope, address_text, outcode, time_bucket):
 def _traffic_zone_verdict(parsed, now_dt=None):
     now_dt = now_dt or datetime.datetime.now()
     time_bucket = _traffic_time_bucket(now_dt)
+    dropoff_address = ("%s" % (parsed.get("dropoff_address") or "")).strip()
+    dropoff_outcode = ("%s" % (parsed.get("dropoff_outcode") or "")).strip()
+    pickup_address = ("%s" % (parsed.get("pickup_address") or "")).strip()
     db_verdict = _traffic_db_verdict(parsed, now_dt)
     if db_verdict:
         return db_verdict
     dropoff_verdict = _traffic_scope_verdict(
         "dropoff",
-        parsed.get("dropoff_address") or "",
-        parsed.get("dropoff_outcode") or "",
+        dropoff_address,
+        dropoff_outcode,
         time_bucket,
     )
     if dropoff_verdict:
         return dropoff_verdict
+    if dropoff_address and not dropoff_outcode and dropoff_address != pickup_address:
+        verdict = _traffic_verdict_payload("NEUTRAL", "Dropoff ?", "dropoff", "dropoff_text_without_postcode", time_bucket)
+        verdict["source"] = "hardcoded"
+        return verdict
 
     pickup_verdict = _traffic_scope_verdict(
         "pickup",
-        parsed.get("pickup_address") or "",
+        pickup_address,
         parsed.get("pickup_outcode") or "",
         time_bucket,
     )
