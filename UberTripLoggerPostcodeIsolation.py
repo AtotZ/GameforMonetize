@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-25-postcode-isolation-ocr-tighten-v18
+# version: 2026-06-25-postcode-isolation-ocr-tighten-v19
 import hashlib
 import json
 import os
@@ -82,11 +82,11 @@ if True:
     POSTCODE_OUTWARD_PATTERNS = ("A9", "A9A", "A99", "AA9", "AA9A", "AA99")
     POSTCODE_OUTWARD_LOOSE_RE = re.compile(r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\b", re.IGNORECASE)
     POSTCODE_FULL_LOOSE_RE = re.compile(
-        r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9OIZ][A-Z]{2,4})\b",
+        r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9IOZLSQBG][A-Z]{2,4})\b",
         re.IGNORECASE,
     )
     POSTCODE_SECTOR_LOOSE_RE = re.compile(
-        r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9OIZ])\b",
+        r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9IOZLSQBG])\b",
         re.IGNORECASE,
     )
     SECTION_MARKERS_RE = re.compile(
@@ -200,6 +200,7 @@ if True:
             .replace("Q", "0")
             .replace("Z", "2")
             .replace("S", "5")
+            .replace("G", "6")
             .replace("B", "8")
         )[:1]
 
@@ -259,7 +260,7 @@ if True:
             UK_PC_RE,
             UK_PC_TERMINAL_RE,
             re.compile(
-                r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9OIZ][A-Z]{2,4})\b(?=[^A-Z0-9]*$)",
+                r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9IOZLSQBG][A-Z]{2,4})\b(?=[^A-Z0-9]*$)",
                 re.IGNORECASE,
             ),
         ):
@@ -983,7 +984,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-25-postcode-ocr-tighten-v18"
+SCRIPT_BUILD = "2026-06-25-postcode-ocr-tighten-v19"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
