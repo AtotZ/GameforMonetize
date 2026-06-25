@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-25-dropoff-missing-postcode-v21
+# version: 2026-06-25-landmark-dropoff-match-v22
 import hashlib
 import json
 import os
@@ -984,7 +984,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-25-dropoff-missing-postcode-v21"
+SCRIPT_BUILD = "2026-06-25-landmark-dropoff-match-v22"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1448,7 +1448,22 @@ CENTRAL_EDGE_RULES = [
     },
     {
         "name": "City",
-        "keywords": ["bank", "moorgate", "monument", "mansion house", "liverpool street", "farringdon", "bishopsgate"],
+        "keywords": [
+            "bank",
+            "moorgate",
+            "monument",
+            "mansion house",
+            "liverpool street",
+            "farringdon",
+            "bishopsgate",
+            "bevis marks",
+            "leadenhall",
+            "threadneedle",
+            "cornhill",
+            "st mary axe",
+            "old broad street",
+            "finsbury circus",
+        ],
         "outcodes": ["EC2", "EC3", "EC4"],
     },
     {
