@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-25-landmark-dropoff-match-v22
+# version: 2026-06-25-postcode-quality-gate-v23
 import hashlib
 import json
 import os
@@ -235,6 +235,10 @@ if True:
             return ""
         if len(raw) == 3 and raw[0] == "U" and raw[1] in ("8", "B") and raw[2].isdigit():
             return "UB%s" % raw[2]
+        if len(raw) == 4 and raw[-1:] in ("O", "I", "L", "Q", "Z", "S", "B", "G"):
+            digit_tail = "%s%s" % (raw[:3], _normalize_postcode_digit_char(raw[3]))
+            if VALID_OUTWARD_RE.match(digit_tail):
+                return digit_tail
         if VALID_OUTWARD_RE.match(raw) and not any(ch in "IOZLSBQ" for ch in raw):
             return raw
         candidates = []
@@ -256,22 +260,24 @@ if True:
 
     def _extract_full_postcode(text):
         line = _fix_postcode_ocr("%s" % (text or ""))
+        candidates = []
         for pattern in (
             UK_PC_RE,
             UK_PC_TERMINAL_RE,
             re.compile(
-                r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9IOZLSQBG][A-Z]{2,4})\b(?=[^A-Z0-9]*$)",
+                r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\s*([0-9IOZLSQBG][A-Z]{2,4})\b",
                 re.IGNORECASE,
             ),
         ):
-            match = pattern.search(line)
-            if not match:
-                continue
-            outward = _normalize_postcode_outward_token(match.group(1))
-            inward = _normalize_postcode_inward_token(match.group(2))
-            if outward and inward:
-                return "%s %s" % (outward, inward)
-        return ""
+            for match in pattern.finditer(line):
+                outward = _normalize_postcode_outward_token(match.group(1))
+                inward = _normalize_postcode_inward_token(match.group(2))
+                if outward and inward:
+                    candidates.append((match.end(), "%s %s" % (outward, inward)))
+        if not candidates:
+            return ""
+        candidates.sort(key=lambda item: (item[0], len(item[1])))
+        return candidates[-1][1]
 
     def _extract_outcode(text):
         full = _extract_full_postcode(text)
@@ -308,6 +314,39 @@ if True:
         if partial_sector:
             return partial_sector
         return ""
+
+    def _derive_postcode_fields(text):
+        full = _extract_full_postcode(text)
+        if full:
+            outward, inward = full.split()
+            return {
+                "postcode": full,
+                "outcode": outward,
+                "sector": "%s %s" % (outward, inward[0]),
+                "quality": "full",
+            }
+        partial_sector = _extract_partial_sector(text)
+        if partial_sector:
+            return {
+                "postcode": "",
+                "outcode": partial_sector.split()[0],
+                "sector": partial_sector,
+                "quality": "sector",
+            }
+        outcode = _extract_outcode(text)
+        if outcode:
+            return {
+                "postcode": "",
+                "outcode": outcode,
+                "sector": "",
+                "quality": "outcode",
+            }
+        return {
+            "postcode": "",
+            "outcode": "",
+            "sector": "",
+            "quality": "none",
+        }
 
     def _normalize_address_postcode_text(text):
         value = _transliterate_postcode_confusables(text)
@@ -881,12 +920,16 @@ if True:
         normalized = dict(parsed or {})
         for field_name in ("pickup_address", "dropoff_address"):
             normalized[field_name] = _normalize_address_postcode_text(normalized.get(field_name) or "")
-        normalized["pickup_postcode"] = _extract_full_postcode(normalized.get("pickup_address") or "")
-        normalized["dropoff_postcode"] = _extract_full_postcode(normalized.get("dropoff_address") or "")
-        normalized["pickup_outcode"] = _extract_outcode(normalized.get("pickup_address") or "")
-        normalized["dropoff_outcode"] = _extract_outcode(normalized.get("dropoff_address") or "")
-        normalized["pickup_sector"] = _extract_sector(normalized.get("pickup_address") or "")
-        normalized["dropoff_sector"] = _extract_sector(normalized.get("dropoff_address") or "")
+        pickup_postcode = _derive_postcode_fields(normalized.get("pickup_address") or "")
+        dropoff_postcode = _derive_postcode_fields(normalized.get("dropoff_address") or "")
+        normalized["pickup_postcode"] = pickup_postcode["postcode"]
+        normalized["dropoff_postcode"] = dropoff_postcode["postcode"]
+        normalized["pickup_outcode"] = pickup_postcode["outcode"]
+        normalized["dropoff_outcode"] = dropoff_postcode["outcode"]
+        normalized["pickup_sector"] = pickup_postcode["sector"]
+        normalized["dropoff_sector"] = dropoff_postcode["sector"]
+        normalized["pickup_postcode_quality"] = pickup_postcode["quality"]
+        normalized["dropoff_postcode_quality"] = dropoff_postcode["quality"]
         return normalized
 
     def _build_parse_error(parsed):
@@ -934,12 +977,8 @@ if True:
             pickup_address = _collect_address_after_index(lines, line_indexes[0], 3) or "Unknown"
         if len(line_indexes) >= 2 and line_indexes[1] >= 0:
             dropoff_address = _collect_address_after_index(lines, line_indexes[1], 3) or "Unknown"
-        pickup_postcode = _extract_full_postcode(pickup_address)
-        dropoff_postcode = _extract_full_postcode(dropoff_address)
-        pickup_outcode = _extract_outcode(pickup_address)
-        dropoff_outcode = _extract_outcode(dropoff_address)
-        pickup_sector = _extract_sector(pickup_address)
-        dropoff_sector = _extract_sector(dropoff_address)
+        pickup_postcode = _derive_postcode_fields(pickup_address)
+        dropoff_postcode = _derive_postcode_fields(dropoff_address)
         parsed = {
             "price": price_info["price"],
             "rating": rating_info["value"],
@@ -949,12 +988,14 @@ if True:
             "pickup_miles": pickup_pair["miles"],
             "pickup_address": pickup_address,
             "dropoff_address": dropoff_address,
-            "pickup_postcode": pickup_postcode,
-            "dropoff_postcode": dropoff_postcode,
-            "pickup_outcode": pickup_outcode,
-            "dropoff_outcode": dropoff_outcode,
-            "pickup_sector": pickup_sector,
-            "dropoff_sector": dropoff_sector,
+            "pickup_postcode": pickup_postcode["postcode"],
+            "dropoff_postcode": dropoff_postcode["postcode"],
+            "pickup_outcode": pickup_postcode["outcode"],
+            "dropoff_outcode": dropoff_postcode["outcode"],
+            "pickup_sector": pickup_postcode["sector"],
+            "dropoff_sector": dropoff_postcode["sector"],
+            "pickup_postcode_quality": pickup_postcode["quality"],
+            "dropoff_postcode_quality": dropoff_postcode["quality"],
             "vehicle_type": vehicle_type_info["value"] or "",
             "surge_text": surge_info["value"] or "N/A",
             "is_reserved": reserved_info["value"] is True,
@@ -984,7 +1025,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-25-landmark-dropoff-match-v22"
+SCRIPT_BUILD = "2026-06-25-postcode-quality-gate-v23"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1726,6 +1767,7 @@ def _traffic_db_verdict(parsed, now_dt=None):
 
     dropoff_outcode = parsed.get("dropoff_outcode") or ""
     dropoff_sector = parsed.get("dropoff_sector") or ""
+    dropoff_quality = _postcode_quality(parsed, "dropoff")
     if not dropoff_outcode:
         return None
 
@@ -1796,6 +1838,8 @@ def _traffic_db_verdict(parsed, now_dt=None):
     exact_red_candidate = exact_total >= TRAP_EXACT_RED_MIN
     nearby_red_candidate = nearby_total >= TRAP_NEARBY_RED_MIN or (exact_total + nearby_total) >= TRAP_NEARBY_RED_MIN
     red_confirmed = (
+        _postcode_quality_rank(dropoff_quality) >= _postcode_quality_rank("sector")
+        and
         red_signal_ok
         and best_positive_days >= DB_RED_MIN_DISTINCT_DAYS
         and (exact_red_candidate or nearby_red_candidate)
@@ -1914,6 +1958,32 @@ def _traffic_verdict_payload(status, label, scope, reason, time_bucket):
     }
 
 
+def _postcode_quality_rank(value):
+    ranks = {
+        "none": 0,
+        "outcode": 1,
+        "sector": 2,
+        "full": 3,
+    }
+    return ranks.get(("%s" % (value or "")).lower(), 0)
+
+
+def _postcode_quality(parsed, prefix):
+    explicit = ("%s" % ((parsed or {}).get("%s_postcode_quality" % prefix) or "")).strip().lower()
+    if explicit:
+        return explicit
+    postcode = ("%s" % ((parsed or {}).get("%s_postcode" % prefix) or "")).strip()
+    sector = ("%s" % ((parsed or {}).get("%s_sector" % prefix) or "")).strip()
+    outcode = ("%s" % ((parsed or {}).get("%s_outcode" % prefix) or "")).strip()
+    if postcode:
+        return "full"
+    if sector:
+        return "sector"
+    if outcode:
+        return "outcode"
+    return "none"
+
+
 def _is_green_outcode(outcode):
     normalized = ("%s" % (outcode or "")).upper()
     return any(normalized.startswith(prefix) for prefix in GREEN_OUTCODE_PREFIXES)
@@ -1938,15 +2008,16 @@ def _match_central_edge_zone(address_text, outcode):
     return ""
 
 
-def _traffic_scope_verdict(scope, address_text, outcode, time_bucket):
+def _traffic_scope_verdict(scope, address_text, outcode, time_bucket, postcode_quality="none"):
     zone_name = _match_central_edge_zone(address_text, outcode)
+    outcode_is_trusted = _postcode_quality_rank(postcode_quality) >= _postcode_quality_rank("sector")
 
     if scope == "dropoff":
-        if _is_red_family_outcode(outcode):
+        if outcode_is_trusted and _is_red_family_outcode(outcode):
             verdict = _traffic_verdict_payload("RED", outcode or "Avoid", scope, "north_or_east_pull", time_bucket)
             verdict["source"] = "hardcoded"
             return verdict
-        if _is_amber_outcode(outcode):
+        if outcode_is_trusted and _is_amber_outcode(outcode):
             label = zone_name or outcode or "Amber Edge"
             verdict = _traffic_verdict_payload("AMBER", label, scope, "dropoff_risk_priority", time_bucket)
             verdict["source"] = "hardcoded"
@@ -1970,12 +2041,12 @@ def _traffic_scope_verdict(scope, address_text, outcode, time_bucket):
         verdict["source"] = "hardcoded"
         return verdict
 
-    if _is_amber_outcode(outcode):
+    if outcode_is_trusted and _is_amber_outcode(outcode):
         verdict = _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "amber_edge_caution", time_bucket)
         verdict["source"] = "hardcoded"
         return verdict
 
-    if _is_red_family_outcode(outcode):
+    if outcode_is_trusted and _is_red_family_outcode(outcode):
         verdict = _traffic_verdict_payload("AMBER", outcode or "Amber Edge", scope, "pickup_origin_caution", time_bucket)
         verdict["source"] = "hardcoded"
         return verdict
@@ -1988,7 +2059,9 @@ def _traffic_zone_verdict(parsed, now_dt=None):
     time_bucket = _traffic_time_bucket(now_dt)
     dropoff_address = ("%s" % (parsed.get("dropoff_address") or "")).strip()
     dropoff_outcode = ("%s" % (parsed.get("dropoff_outcode") or "")).strip()
+    dropoff_quality = _postcode_quality(parsed, "dropoff")
     pickup_address = ("%s" % (parsed.get("pickup_address") or "")).strip()
+    pickup_quality = _postcode_quality(parsed, "pickup")
     db_verdict = _traffic_db_verdict(parsed, now_dt)
     if db_verdict:
         return db_verdict
@@ -1997,6 +2070,7 @@ def _traffic_zone_verdict(parsed, now_dt=None):
         dropoff_address,
         dropoff_outcode,
         time_bucket,
+        dropoff_quality,
     )
     if dropoff_verdict:
         return dropoff_verdict
@@ -2010,6 +2084,7 @@ def _traffic_zone_verdict(parsed, now_dt=None):
         pickup_address,
         parsed.get("pickup_outcode") or "",
         time_bucket,
+        pickup_quality,
     )
     if pickup_verdict:
         return pickup_verdict
