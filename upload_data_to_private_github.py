@@ -2,7 +2,7 @@ import base64
 import datetime
 import glob
 import hashlib
-# version: 2026-06-24-private-data-upload-daily-history-v9
+# version: 2026-06-25-private-data-upload-ledger-v10
 import json
 import os
 import time
@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-private-upload-v9"
+SCRIPT_BUILD = "2026-06-25-private-upload-v10"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -59,6 +59,16 @@ DEFAULT_FILE_SPECS = [
         "label": "offer_latest_debug",
         "local_rel_path": "TestSubjextData/offers/TripLog-OnisAI-PostcodeIsolation-latest.json",
         "remote_rel_path": "offers/TripLog-OnisAI-PostcodeIsolation-latest.json",
+    },
+    {
+        "label": "saved_trip_ledger",
+        "local_rel_path": "TestSubjextData/logs/TripLog-OnisAI-PostcodeIsolation.jsonl",
+        "remote_rel_path": "logs/TripLog-OnisAI-PostcodeIsolation.jsonl",
+    },
+    {
+        "label": "saved_trip_log",
+        "local_rel_path": "TestSubjextData/logs/TripLog-OnisAI-PostcodeIsolation.txt",
+        "remote_rel_path": "logs/TripLog-OnisAI-PostcodeIsolation.txt",
     },
     {
         "label": "traffic_latest",

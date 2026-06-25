@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-24-updater-daily-history-bootstrap-v16
+# version: 2026-06-25-updater-ledger-sync-v17
 import json
 import os
 import re
@@ -10,7 +10,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-24-updater-v16"
+SCRIPT_BUILD = "2026-06-25-updater-v17"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -41,6 +41,16 @@ DEFAULT_PRIVATE_SYNC_CONFIG = {
             "label": "offer_latest_debug",
             "local_rel_path": "TestSubjextData/offers/TripLog-OnisAI-PostcodeIsolation-latest.json",
             "remote_rel_path": "offers/TripLog-OnisAI-PostcodeIsolation-latest.json",
+        },
+        {
+            "label": "saved_trip_ledger",
+            "local_rel_path": "TestSubjextData/logs/TripLog-OnisAI-PostcodeIsolation.jsonl",
+            "remote_rel_path": "logs/TripLog-OnisAI-PostcodeIsolation.jsonl",
+        },
+        {
+            "label": "saved_trip_log",
+            "local_rel_path": "TestSubjextData/logs/TripLog-OnisAI-PostcodeIsolation.txt",
+            "remote_rel_path": "logs/TripLog-OnisAI-PostcodeIsolation.txt",
         },
         {
             "label": "traffic_latest",
