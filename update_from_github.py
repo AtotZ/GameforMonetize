@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-26-updater-private-upload-guard-v18
+# version: 2026-06-26-updater-power-snapshot-v19
 import json
 import os
 import re
@@ -9,8 +9,13 @@ import sys
 import time
 import urllib.request
 
+try:
+    from objc_util import ObjCClass
+except Exception:
+    ObjCClass = None
 
-SCRIPT_BUILD = "2026-06-26-updater-v18"
+
+SCRIPT_BUILD = "2026-06-26-updater-v19"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -120,6 +125,52 @@ FILE_MAP = [
 
 def _timestamp():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _power_snapshot():
+    snapshot = {
+        "available": False,
+        "battery_level_pct": None,
+        "battery_state": "",
+        "low_power_mode": None,
+        "thermal_state": "",
+    }
+    if ObjCClass is None:
+        return snapshot
+    try:
+        UIDevice = ObjCClass("UIDevice")
+        NSProcessInfo = ObjCClass("NSProcessInfo")
+        device = UIDevice.currentDevice()
+        previous_monitoring = bool(device.isBatteryMonitoringEnabled())
+        if not previous_monitoring:
+            device.setBatteryMonitoringEnabled_(True)
+        try:
+            level = float(device.batteryLevel())
+            state_code = int(device.batteryState())
+            process = NSProcessInfo.processInfo()
+            low_power_mode = bool(process.isLowPowerModeEnabled())
+            thermal_code = int(process.thermalState())
+        finally:
+            if not previous_monitoring:
+                device.setBatteryMonitoringEnabled_(False)
+        snapshot["available"] = True
+        snapshot["battery_level_pct"] = int(round(level * 100.0)) if level >= 0 else None
+        snapshot["battery_state"] = {
+            0: "unknown",
+            1: "unplugged",
+            2: "charging",
+            3: "full",
+        }.get(state_code, "unknown")
+        snapshot["low_power_mode"] = low_power_mode
+        snapshot["thermal_state"] = {
+            0: "nominal",
+            1: "fair",
+            2: "serious",
+            3: "critical",
+        }.get(thermal_code, "unknown")
+    except Exception:
+        return snapshot
+    return snapshot
 
 
 def _append_console_log(message):
@@ -340,8 +391,12 @@ def _summarize_private_upload(result):
         summary["failed_count"] = len(
             [item for item in upload_results if item.get("status") == "upload_failed"]
         )
+        summary["deferred_power_save_count"] = len(
+            [item for item in upload_results if item.get("status") == "deferred_power_save"]
+        )
         summary["manifest_uploaded"] = bool(status_payload.get("manifest_uploaded"))
         summary["manifest_error"] = status_payload.get("manifest_error") or ""
+        summary["power_lite_mode"] = bool(status_payload.get("power_lite_mode"))
     if result.get("error"):
         summary["error"] = result.get("error")
     if "exit_code" in result:
@@ -418,6 +473,17 @@ def _update_one_file(item, manifest_payload):
 def main():
     started = time.perf_counter()
     _log("===== updater session start | %s | %s =====" % (_timestamp(), SCRIPT_BUILD))
+    power_snapshot = _power_snapshot()
+    if power_snapshot.get("available"):
+        _log(
+            "[updater] power | battery=%s%% state=%s low_power=%s thermal=%s"
+            % (
+                power_snapshot.get("battery_level_pct"),
+                power_snapshot.get("battery_state") or "unknown",
+                "yes" if power_snapshot.get("low_power_mode") else "no",
+                power_snapshot.get("thermal_state") or "unknown",
+            )
+        )
     manifest_payload = _download_manifest()
     results = []
     for item in FILE_MAP:
@@ -458,6 +524,7 @@ def main():
         "private_sync_bootstrap": private_sync_bootstrap,
         "private_upload": private_upload_result,
         "private_upload_summary": _summarize_private_upload(private_upload_result),
+        "power_snapshot": power_snapshot,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     _write_status(payload)
@@ -481,26 +548,30 @@ def main():
     elif private_upload_result.get("ok"):
         upload_summary = _summarize_private_upload(private_upload_result)
         _log(
-            "[updater] private upload ok | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s | at=%s"
+            "[updater] private upload ok | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s deferred=%s power_lite=%s | at=%s"
             % (
                 upload_summary.get("uploaded_count", 0),
                 upload_summary.get("skipped_unchanged_count", 0),
                 upload_summary.get("missing_count", 0),
                 upload_summary.get("too_large_count", 0),
                 upload_summary.get("failed_count", 0),
+                upload_summary.get("deferred_power_save_count", 0),
+                "yes" if upload_summary.get("power_lite_mode") else "no",
                 upload_summary.get("timestamp") or "",
             )
         )
     else:
         upload_summary = _summarize_private_upload(private_upload_result)
         _log(
-            "[updater] private upload failed | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s | error=%s"
+            "[updater] private upload failed | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s deferred=%s power_lite=%s | error=%s"
             % (
                 upload_summary.get("uploaded_count", 0),
                 upload_summary.get("skipped_unchanged_count", 0),
                 upload_summary.get("missing_count", 0),
                 upload_summary.get("too_large_count", 0),
                 upload_summary.get("failed_count", 0),
+                upload_summary.get("deferred_power_save_count", 0),
+                "yes" if upload_summary.get("power_lite_mode") else "no",
                 upload_summary.get("error") or upload_summary.get("manifest_error") or "unknown",
             )
         )

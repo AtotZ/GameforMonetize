@@ -11,8 +11,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+try:
+    from objc_util import ObjCClass
+except Exception:
+    ObjCClass = None
 
-SCRIPT_BUILD = "2026-06-26-private-upload-timeout-guard-v11"
+
+SCRIPT_BUILD = "2026-06-26-private-upload-power-lite-v12"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 8
 REQUEST_RETRY_ATTEMPTS = 2
@@ -21,6 +26,14 @@ MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 MAX_CONSOLE_LOG_LINES = 400
 TRIMMED_CONSOLE_LOG_LINES = 250
 MAX_CONSOLE_LOG_BYTES = 48 * 1024
+POWER_LITE_BATTERY_MAX_PCT = 18
+POWER_LITE_ALLOWED_LABELS = {
+    "active_offer",
+    "offer_latest_debug",
+    "traffic_latest",
+    "traffic_db",
+    "route_db",
+}
 
 
 def _safe_script_dir():
@@ -110,6 +123,84 @@ EXAMPLE_CONFIG = {
 
 def _timestamp():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _power_snapshot():
+    snapshot = {
+        "available": False,
+        "battery_level_pct": None,
+        "battery_state": "",
+        "battery_state_code": None,
+        "low_power_mode": None,
+        "thermal_state": "",
+        "thermal_state_code": None,
+    }
+    if ObjCClass is None:
+        return snapshot
+    try:
+        UIDevice = ObjCClass("UIDevice")
+        NSProcessInfo = ObjCClass("NSProcessInfo")
+        device = UIDevice.currentDevice()
+        previous_monitoring = bool(device.isBatteryMonitoringEnabled())
+        if not previous_monitoring:
+            device.setBatteryMonitoringEnabled_(True)
+        try:
+            level = float(device.batteryLevel())
+            state_code = int(device.batteryState())
+            process = NSProcessInfo.processInfo()
+            low_power_mode = bool(process.isLowPowerModeEnabled())
+            thermal_code = int(process.thermalState())
+        finally:
+            if not previous_monitoring:
+                device.setBatteryMonitoringEnabled_(False)
+        snapshot["available"] = True
+        snapshot["battery_level_pct"] = int(round(level * 100.0)) if level >= 0 else None
+        snapshot["battery_state_code"] = state_code
+        snapshot["battery_state"] = {
+            0: "unknown",
+            1: "unplugged",
+            2: "charging",
+            3: "full",
+        }.get(state_code, "unknown")
+        snapshot["low_power_mode"] = low_power_mode
+        snapshot["thermal_state_code"] = thermal_code
+        snapshot["thermal_state"] = {
+            0: "nominal",
+            1: "fair",
+            2: "serious",
+            3: "critical",
+        }.get(thermal_code, "unknown")
+    except Exception:
+        return snapshot
+    return snapshot
+
+
+def _should_use_power_lite_mode(snapshot):
+    if not isinstance(snapshot, dict) or not snapshot.get("available"):
+        return False
+    if snapshot.get("thermal_state") in ("serious", "critical"):
+        return True
+    if snapshot.get("low_power_mode") is True:
+        return True
+    battery_level_pct = snapshot.get("battery_level_pct")
+    battery_state = ("%s" % (snapshot.get("battery_state") or "")).lower()
+    return (
+        isinstance(battery_level_pct, int)
+        and battery_level_pct <= POWER_LITE_BATTERY_MAX_PCT
+        and battery_state not in ("charging", "full")
+    )
+
+
+def _apply_power_lite_filter(file_specs):
+    kept = []
+    deferred = []
+    for item in file_specs or []:
+        label = ("%s" % (item.get("label") or "")).strip()
+        if label in POWER_LITE_ALLOWED_LABELS:
+            kept.append(item)
+        else:
+            deferred.append(label or _normalize_rel_path(item.get("remote_rel_path") or ""))
+    return kept, deferred
 
 
 def _append_console_log(message):
@@ -553,11 +644,27 @@ def main():
     started = time.perf_counter()
     _log("[private-upload] session start | %s | %s" % (_timestamp(), SCRIPT_BUILD))
     config = _load_config()
+    power_snapshot = _power_snapshot()
     cache_payload = _load_cache(config)
     invocation_context = _read_invocation_context()
+    file_specs = list(config["files"] or [])
+    power_lite_mode = _should_use_power_lite_mode(power_snapshot)
+    deferred_labels = []
+    if power_lite_mode:
+        file_specs, deferred_labels = _apply_power_lite_filter(file_specs)
+        _log(
+            "[private-upload] power-lite mode | battery=%s%% state=%s low_power=%s thermal=%s deferred=%d"
+            % (
+                power_snapshot.get("battery_level_pct"),
+                power_snapshot.get("battery_state") or "unknown",
+                "yes" if power_snapshot.get("low_power_mode") else "no",
+                power_snapshot.get("thermal_state") or "unknown",
+                len(deferred_labels),
+            )
+        )
     results = []
     failed_count = 0
-    for item in config["files"]:
+    for item in file_specs:
         try:
             results.append(_upload_one(config, item, cache_payload))
         except Exception as exc:
@@ -571,6 +678,13 @@ def main():
                     "error": "%s" % exc,
                 }
             )
+    for label in deferred_labels:
+        results.append(
+            {
+                "label": label,
+                "status": "deferred_power_save",
+            }
+        )
     manifest = _build_manifest(results, invocation_context)
     should_upload_manifest = any(item.get("status") == "uploaded" for item in results)
     manifest_error = ""
@@ -590,6 +704,9 @@ def main():
         "branch": config["branch"],
         "remote_root": config["remote_root"],
         "bootstrap": config.get("bootstrap"),
+        "power_snapshot": power_snapshot,
+        "power_lite_mode": power_lite_mode,
+        "deferred_labels": deferred_labels,
         "manifest_uploaded": should_upload_manifest,
         "manifest_error": manifest_error,
         "failed_count": failed_count,
