@@ -1,4 +1,4 @@
-# version: 2026-06-26-traffic-beacon-notify-v12
+# version: 2026-06-26-traffic-beacon-direction-shadow-v13
 import datetime
 import glob
 import json
@@ -34,6 +34,7 @@ CONFIDENCE_MEDIUM_MIN_SAMPLES = 3
 CONFIDENCE_HIGH_MIN_SAMPLES = 8
 TRAFFIC_FINE_BUCKET_MINUTES = 15
 CORRIDOR_CELL_SIZE_METERS = 200.0
+DIRECTION_BINS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
@@ -238,6 +239,18 @@ def _empty_counter(with_time_buckets=True):
     }
 
 
+def _direction_bin_from_bearing(bearing_deg):
+    try:
+        bearing = float(bearing_deg)
+    except Exception:
+        return ""
+    if bearing < 0:
+        return ""
+    normalized = bearing % 360.0
+    index = int(((normalized + 22.5) % 360.0) // 45.0)
+    return DIRECTION_BINS[index]
+
+
 def _corridor_lon_step_degrees(latitude):
     cos_lat = math.cos(math.radians(float(latitude or 0.0)))
     if abs(cos_lat) < 0.01:
@@ -263,6 +276,37 @@ def _corridor_segment_key(from_cell, to_cell):
     if not from_key or not to_key or from_key == to_key:
         return ""
     return "%s>%s" % (from_key, to_key)
+
+
+def _corridor_segment_bearing(from_lat, from_lon, to_lat, to_lon):
+    try:
+        lat1 = math.radians(float(from_lat))
+        lon1 = math.radians(float(from_lon))
+        lat2 = math.radians(float(to_lat))
+        lon2 = math.radians(float(to_lon))
+    except Exception:
+        return -1.0
+    dlon = lon2 - lon1
+    y = math.sin(dlon) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    if abs(x) < 1e-12 and abs(y) < 1e-12:
+        return -1.0
+    bearing = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+    return round(bearing, 2)
+
+
+def _top_counter_item(counter):
+    if not isinstance(counter, dict) or not counter:
+        return "", 0
+    ranked = sorted(
+        [
+            (("%s" % key).strip(), int(value or 0))
+            for key, value in counter.items()
+            if ("%s" % key).strip() and int(value or 0) > 0
+        ],
+        key=lambda item: (-item[1], item[0]),
+    )
+    return ranked[0] if ranked else ("", 0)
 
 
 def _refresh_bucket_coverage_metrics(bucket):
@@ -299,6 +343,18 @@ def _refresh_bucket_coverage_metrics(bucket):
     corridor_segments = bucket.get("corridor_segments")
     if isinstance(corridor_segments, dict):
         bucket["corridor_unique_segments"] = len(corridor_segments)
+
+    course_bins = bucket.get("course_bins")
+    if isinstance(course_bins, dict):
+        top_course, top_course_hits = _top_counter_item(course_bins)
+        bucket["dominant_course_direction"] = top_course
+        bucket["dominant_course_hits"] = top_course_hits
+
+    flow_direction_bins = bucket.get("flow_direction_bins")
+    if isinstance(flow_direction_bins, dict):
+        top_flow, top_flow_hits = _top_counter_item(flow_direction_bins)
+        bucket["dominant_flow_direction"] = top_flow
+        bucket["dominant_flow_hits"] = top_flow_hits
 
 
 def _bump_counter(bucket, status, timestamp):
@@ -586,6 +642,12 @@ def _route_bucket(active_offer):
         "unique_day_hits": 0,
         "beacon_outcodes": {},
         "beacon_sectors": {},
+        "course_bins": {},
+        "flow_direction_bins": {},
+        "dominant_course_direction": "",
+        "dominant_course_hits": 0,
+        "dominant_flow_direction": "",
+        "dominant_flow_hits": 0,
         "corridor_cells": {},
         "corridor_segments": {},
         "corridor_unique_cells": 0,
@@ -638,17 +700,35 @@ def _touch_route_corridor(bucket, active_offer, beacon_payload, status, beacon_o
     if beacon_sector:
         cell_entry["beacon_sectors"][beacon_sector] = int(cell_entry["beacon_sectors"].get(beacon_sector) or 0) + 1
 
+    course_bin = _direction_bin_from_bearing(beacon_payload.get("course_deg"))
+    if course_bin:
+        bucket.setdefault("course_bins", {})
+        bucket["course_bins"][course_bin] = int(bucket["course_bins"].get(course_bin) or 0) + 1
+
     previous_offer_timestamp = "%s" % (bucket.get("corridor_last_offer_timestamp") or "")
     previous_cell = "%s" % (bucket.get("corridor_last_cell") or "")
+    previous_cell_entry = corridor_cells.get(previous_cell) if previous_cell else None
     if offer_timestamp and previous_offer_timestamp == offer_timestamp and previous_cell and previous_cell != cell_key:
         segment_key = _corridor_segment_key(previous_cell, cell_key)
         if segment_key:
+            bearing_deg = -1.0
+            direction_bin = ""
+            if isinstance(previous_cell_entry, dict):
+                bearing_deg = _corridor_segment_bearing(
+                    previous_cell_entry.get("lat"),
+                    previous_cell_entry.get("lon"),
+                    cell_lat,
+                    cell_lon,
+                )
+                direction_bin = _direction_bin_from_bearing(bearing_deg)
             segment_entry = corridor_segments.setdefault(
                 segment_key,
                 {
                     "segment": segment_key,
                     "from_cell": previous_cell,
                     "to_cell": cell_key,
+                    "bearing_deg": bearing_deg,
+                    "direction_bin": direction_bin,
                     "hits": 0,
                     "traffic_count": 0,
                     "no_traffic_count": 0,
@@ -662,6 +742,11 @@ def _touch_route_corridor(bucket, active_offer, beacon_payload, status, beacon_o
             else:
                 segment_entry["no_traffic_count"] = int(segment_entry.get("no_traffic_count") or 0) + 1
             segment_entry["last_seen"] = timestamp or segment_entry.get("last_seen") or ""
+            if direction_bin:
+                segment_entry["bearing_deg"] = bearing_deg
+                segment_entry["direction_bin"] = direction_bin
+                bucket.setdefault("flow_direction_bins", {})
+                bucket["flow_direction_bins"][direction_bin] = int(bucket["flow_direction_bins"].get(direction_bin) or 0) + 1
 
     bucket["corridor_last_cell"] = cell_key
     bucket["corridor_last_offer_timestamp"] = offer_timestamp
@@ -736,6 +821,10 @@ def _update_route_db(active_offer, beacon_payload):
         "unique_day_hits": bucket.get("unique_day_hits") or 0,
         "unique_beacon_outcodes": bucket.get("unique_beacon_outcodes") or 0,
         "unique_beacon_sectors": bucket.get("unique_beacon_sectors") or 0,
+        "dominant_course_direction": bucket.get("dominant_course_direction") or "",
+        "dominant_course_hits": int(bucket.get("dominant_course_hits") or 0),
+        "dominant_flow_direction": bucket.get("dominant_flow_direction") or "",
+        "dominant_flow_hits": int(bucket.get("dominant_flow_hits") or 0),
         "corridor_unique_cells": bucket.get("corridor_unique_cells") or 0,
         "corridor_unique_segments": bucket.get("corridor_unique_segments") or 0,
     }

@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-26-route-corridor-shadow-v27
+# version: 2026-06-26-route-direction-shadow-v28
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-26-route-corridor-shadow-v27"
+SCRIPT_BUILD = "2026-06-26-route-direction-shadow-v28"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1840,6 +1840,10 @@ def _route_shadow_snapshot(parsed, now_dt=None):
         "unique_day_hits": 0,
         "unique_beacon_outcodes": 0,
         "unique_beacon_sectors": 0,
+        "dominant_course_direction": "",
+        "dominant_course_hits": 0,
+        "dominant_flow_direction": "",
+        "dominant_flow_hits": 0,
         "corridor_unique_cells": 0,
         "corridor_unique_segments": 0,
         "time_bucket": _traffic_time_bucket(now_dt),
@@ -1886,6 +1890,10 @@ def _route_shadow_snapshot(parsed, now_dt=None):
             "unique_day_hits": int(route_bucket.get("unique_day_hits") or 0),
             "unique_beacon_outcodes": int(route_bucket.get("unique_beacon_outcodes") or 0),
             "unique_beacon_sectors": int(route_bucket.get("unique_beacon_sectors") or 0),
+            "dominant_course_direction": route_bucket.get("dominant_course_direction") or "",
+            "dominant_course_hits": int(route_bucket.get("dominant_course_hits") or 0),
+            "dominant_flow_direction": route_bucket.get("dominant_flow_direction") or "",
+            "dominant_flow_hits": int(route_bucket.get("dominant_flow_hits") or 0),
             "corridor_unique_cells": int(route_bucket.get("corridor_unique_cells") or 0),
             "corridor_unique_segments": int(route_bucket.get("corridor_unique_segments") or 0),
             "time_bucket_score": round(time_score, 2),
