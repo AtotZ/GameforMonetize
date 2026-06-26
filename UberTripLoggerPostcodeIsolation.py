@@ -798,6 +798,25 @@ if True:
                 cut_at = index
         return line[:cut_at].strip()
 
+    def _normalize_house_number_ocr(value):
+        line = "%s" % (value or "")
+        line = re.sub(r"(?<![A-Za-z0-9])([0-9]{1,4})\s*[lI|](?=\s+[A-Z][A-Za-z])", r"\g<1>1", line)
+        return line
+
+    def _remove_embedded_duplicate_postcode(value):
+        line = re.sub(r"\s+", " ", "%s" % (value or "")).strip()
+        full = _extract_full_postcode(line)
+        if not full:
+            return line
+        occurrences = list(re.finditer(re.escape(full), line, re.IGNORECASE))
+        if len(occurrences) <= 1:
+            return line
+        final_match = occurrences[-1]
+        leading = line[: final_match.start()].rstrip(" ,.;-")
+        leading = re.sub(r"(?<![A-Za-z0-9])%s(?=\s+[A-Za-z])" % re.escape(full), "", leading, count=1, flags=re.IGNORECASE)
+        leading = re.sub(r"\s+", " ", leading).strip(" ,.;-")
+        return ("%s, %s" % (leading, full)).strip(" ,.;-")
+
     def _clean_address_line(raw_line):
         line = _truncate_at_terminal(raw_line)
         line = _trim_at_first_overlay_stopword(line)
@@ -810,7 +829,9 @@ if True:
         line = re.sub(r"^[|lI]\s+", "", line)
         line = re.sub(r"\bPI\b", "Pl", line)
         line = re.sub(r"\bWIG\b", "W1G", line)
+        line = _normalize_house_number_ocr(line)
         line = _normalize_address_postcode_text(line)
+        line = _remove_embedded_duplicate_postcode(line)
         return line.rstrip(" ,.;-")
 
     def _is_likely_address_line(line):
@@ -919,7 +940,10 @@ if True:
     def _normalize_parsed_address_fields(parsed):
         normalized = dict(parsed or {})
         for field_name in ("pickup_address", "dropoff_address"):
-            normalized[field_name] = _normalize_address_postcode_text(normalized.get(field_name) or "")
+            value = normalized.get(field_name) or ""
+            value = _normalize_house_number_ocr(value)
+            value = _normalize_address_postcode_text(value)
+            normalized[field_name] = _remove_embedded_duplicate_postcode(value)
         pickup_postcode = _derive_postcode_fields(normalized.get("pickup_address") or "")
         dropoff_postcode = _derive_postcode_fields(normalized.get("dropoff_address") or "")
         normalized["pickup_postcode"] = pickup_postcode["postcode"]
