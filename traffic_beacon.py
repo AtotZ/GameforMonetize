@@ -1,4 +1,4 @@
-# version: 2026-06-25-traffic-beacon-day-aware-v9
+# version: 2026-06-26-traffic-beacon-coverage-metrics-v10
 import datetime
 import glob
 import json
@@ -191,12 +191,42 @@ def _empty_counter(with_time_buckets=True):
         "no_traffic_count": 0,
         "net_score": 0,
         "samples": 0,
+        "raw_beacon_hits": 0,
         "confidence": "low",
         "last_seen": "",
         "days_seen": {},
+        "unique_day_hits": 0,
         "time_buckets": {} if with_time_buckets else None,
         "time_windows_15m": {} if with_time_buckets else None,
     }
+
+
+def _refresh_bucket_coverage_metrics(bucket):
+    if not isinstance(bucket, dict):
+        return
+    bucket["raw_beacon_hits"] = int(bucket.get("samples") or 0)
+    days_seen = bucket.get("days_seen")
+    bucket["unique_day_hits"] = len(days_seen) if isinstance(days_seen, dict) else 0
+
+    sector_hits = bucket.get("sector_hits")
+    if isinstance(sector_hits, dict):
+        bucket["unique_sector_hits"] = len(sector_hits)
+
+    outcodes = bucket.get("outcodes")
+    if isinstance(outcodes, dict):
+        bucket["unique_outcode_hits"] = len(outcodes)
+
+    districts = bucket.get("districts")
+    if isinstance(districts, dict):
+        bucket["unique_district_hits"] = len(districts)
+
+    beacon_outcodes = bucket.get("beacon_outcodes")
+    if isinstance(beacon_outcodes, dict):
+        bucket["unique_beacon_outcodes"] = len(beacon_outcodes)
+
+    beacon_sectors = bucket.get("beacon_sectors")
+    if isinstance(beacon_sectors, dict):
+        bucket["unique_beacon_sectors"] = len(beacon_sectors)
 
 
 def _bump_counter(bucket, status, timestamp):
@@ -212,6 +242,7 @@ def _bump_counter(bucket, status, timestamp):
     if date_key:
         bucket.setdefault("days_seen", {})
         bucket["days_seen"][date_key] = int(bucket["days_seen"].get(date_key) or 0) + 1
+    _refresh_bucket_coverage_metrics(bucket)
     if isinstance(bucket.get("time_buckets"), dict):
         coarse_bucket = _time_bucket_name_from_timestamp(timestamp)
         leaf = bucket["time_buckets"].setdefault(coarse_bucket, _empty_counter(with_time_buckets=False))
@@ -226,6 +257,7 @@ def _bump_counter(bucket, status, timestamp):
         if date_key:
             leaf.setdefault("days_seen", {})
             leaf["days_seen"][date_key] = int(leaf["days_seen"].get(date_key) or 0) + 1
+        _refresh_bucket_coverage_metrics(leaf)
     if isinstance(bucket.get("time_windows_15m"), dict):
         dt_obj = _parse_timestamp(timestamp)
         fine_bucket = _fine_time_bucket_key(dt_obj)
@@ -241,6 +273,7 @@ def _bump_counter(bucket, status, timestamp):
         if date_key:
             leaf.setdefault("days_seen", {})
             leaf["days_seen"][date_key] = int(leaf["days_seen"].get(date_key) or 0) + 1
+        _refresh_bucket_coverage_metrics(leaf)
 
 
 def _build_beacon_db(history):
@@ -280,6 +313,7 @@ def _build_beacon_db(history):
             _bump_counter(outcode_bucket, status, timestamp)
             if sector:
                 outcode_bucket["sector_hits"][sector] = int(outcode_bucket["sector_hits"].get(sector) or 0) + 1
+            _refresh_bucket_coverage_metrics(outcode_bucket)
 
         if sector:
             sector_bucket = db["sectors"].setdefault(
@@ -314,7 +348,22 @@ def _build_beacon_db(history):
             _bump_counter(district_bucket, status, timestamp)
             if outcode:
                 district_bucket["outcodes"][outcode] = int(district_bucket["outcodes"].get(outcode) or 0) + 1
+            _refresh_bucket_coverage_metrics(district_bucket)
 
+    return db
+
+
+def _refresh_beacon_db_coverage(db):
+    if not isinstance(db, dict):
+        return db
+    for bucket in (db.get("outcodes") or {}).values():
+        _refresh_bucket_coverage_metrics(bucket)
+    for bucket in (db.get("sectors") or {}).values():
+        _refresh_bucket_coverage_metrics(bucket)
+    for family_bucket in (db.get("families") or {}).values():
+        _refresh_bucket_coverage_metrics(family_bucket)
+        for district_bucket in (family_bucket.get("districts") or {}).values():
+            _refresh_bucket_coverage_metrics(district_bucket)
     return db
 
 
@@ -339,7 +388,7 @@ def _load_or_build_beacon_db():
             "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
             "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
         }
-        return payload
+        return _refresh_beacon_db_coverage(payload)
     history = _load_history()
     return _build_beacon_db(history) if history else _empty_beacon_db()
 
@@ -380,6 +429,7 @@ def _update_beacon_db_incremental(db, entry):
         _bump_counter(outcode_bucket, status, timestamp)
         if sector:
             outcode_bucket["sector_hits"][sector] = int(outcode_bucket["sector_hits"].get(sector) or 0) + 1
+        _refresh_bucket_coverage_metrics(outcode_bucket)
 
     if sector:
         sector_bucket = db["sectors"].setdefault(
@@ -414,6 +464,7 @@ def _update_beacon_db_incremental(db, entry):
         _bump_counter(district_bucket, status, timestamp)
         if outcode:
             district_bucket["outcodes"][outcode] = int(district_bucket["outcodes"].get(outcode) or 0) + 1
+        _refresh_bucket_coverage_metrics(district_bucket)
     return db
 
 
@@ -455,9 +506,12 @@ def _route_bucket(active_offer):
         "no_traffic_count": 0,
         "net_score": 0,
         "samples": 0,
+        "raw_beacon_hits": 0,
         "confidence": "low",
         "last_seen": "",
         "last_offer_timestamp": active_offer.get("timestamp") or "",
+        "days_seen": {},
+        "unique_day_hits": 0,
         "beacon_outcodes": {},
         "beacon_sectors": {},
         "time_buckets": {},
@@ -491,6 +545,10 @@ def _update_route_db(active_offer, beacon_payload):
     bucket["confidence"] = _confidence_label(bucket["samples"])
     bucket["last_seen"] = beacon_payload.get("timestamp") or bucket.get("last_seen") or ""
     bucket["last_offer_timestamp"] = active_offer.get("timestamp") or bucket.get("last_offer_timestamp") or ""
+    date_key = ("%s" % (beacon_payload.get("timestamp") or ""))[:10]
+    if date_key:
+        bucket.setdefault("days_seen", {})
+        bucket["days_seen"][date_key] = int(bucket["days_seen"].get(date_key) or 0) + 1
     dt_obj = _parse_timestamp(beacon_payload.get("timestamp") or "")
     coarse_bucket = _time_bucket_name_from_timestamp(beacon_payload.get("timestamp") or "")
     time_leaf = bucket["time_buckets"].setdefault(coarse_bucket, _empty_counter(with_time_buckets=False))
@@ -516,12 +574,17 @@ def _update_route_db(active_offer, beacon_payload):
         bucket["beacon_outcodes"][beacon_outcode] = int(bucket["beacon_outcodes"].get(beacon_outcode) or 0) + 1
     if beacon_sector:
         bucket["beacon_sectors"][beacon_sector] = int(bucket["beacon_sectors"].get(beacon_sector) or 0) + 1
+    _refresh_bucket_coverage_metrics(bucket)
     route_db["total_routes"] = len(routes)
     _write_json(ROUTE_DB_JSON_PATH, route_db)
     return {
         "route_key": route_key,
         "samples": bucket["samples"],
         "net_score": bucket["net_score"],
+        "raw_beacon_hits": bucket.get("raw_beacon_hits") or 0,
+        "unique_day_hits": bucket.get("unique_day_hits") or 0,
+        "unique_beacon_outcodes": bucket.get("unique_beacon_outcodes") or 0,
+        "unique_beacon_sectors": bucket.get("unique_beacon_sectors") or 0,
     }
 
 
