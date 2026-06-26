@@ -1,34 +1,34 @@
 {
-  "updated_at": "2026-06-25 11:52:00",
-  "manifest_build": "2026-06-25-manifest-v18",
+  "updated_at": "2026-06-26 13:11:00",
+  "manifest_build": "2026-06-26-manifest-v19",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-25-landmark-dropoff-match-v22",
-      "script_build": "2026-06-25-landmark-dropoff-match-v22",
-      "bytes": 118560,
-      "content_sha1": "82cc71efaae6b10793338596a99805261e00ffa2"
+      "version_comment": "2026-06-26-notification-traffic-compact-v25",
+      "script_build": "2026-06-25-postcode-quality-outputs-v24",
+      "bytes": 122950,
+      "content_sha1": "50a6f7f7aec682aa9fc94d32da19beef4f0ef397"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
-      "version_comment": "2026-06-25-traffic-beacon-day-aware-v9",
+      "version_comment": "2026-06-26-traffic-beacon-coverage-metrics-v10",
       "script_build": "",
-      "bytes": 24258,
-      "content_sha1": "1defd5579d37bf0da2bbd0a85602c5e2aa6dca38"
+      "bytes": 26930,
+      "content_sha1": "b025dfd71aca2edc155849b7de903ff612e0c8f3"
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-25-updater-ledger-sync-v17",
-      "script_build": "2026-06-25-updater-v17",
-      "bytes": 18162,
-      "content_sha1": "28758a2e124abf1d9d23df530a2f79a772b4a656"
+      "version_comment": "2026-06-26-updater-manifest-bypass-v20",
+      "script_build": "2026-06-26-updater-v20",
+      "bytes": 20728,
+      "content_sha1": "e4e039a3ef2b9272be47a7eb8bd254ddbb75c085"
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
       "version_comment": "2026-06-25-private-data-upload-ledger-v10",
-      "script_build": "2026-06-25-private-upload-v10",
-      "bytes": 21125,
-      "content_sha1": "c12412aa8533c41f406627108bca9e81caa5365f"
+      "script_build": "2026-06-26-private-upload-power-lite-v12",
+      "bytes": 26915,
+      "content_sha1": "768878ff2eaf17113f3fea50f134c41e99194998"
     }
   }
 }
