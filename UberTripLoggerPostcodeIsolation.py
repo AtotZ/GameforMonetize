@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-26-route-direction-shadow-v28
+# version: 2026-06-26-route-direction-shadow-v29
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-26-route-direction-shadow-v28"
+SCRIPT_BUILD = "2026-06-26-route-direction-shadow-v29"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1821,6 +1821,33 @@ def _route_shadow_status_hint(net_score, samples, time_score, time_samples):
     return "none"
 
 
+def _route_shadow_direction_summary(route_shadow):
+    if not isinstance(route_shadow, dict):
+        return {"mode": "", "direction": "", "hits": 0, "summary": ""}
+
+    flow_direction = ("%s" % (route_shadow.get("dominant_flow_direction") or "")).strip().upper()
+    flow_hits = int(route_shadow.get("dominant_flow_hits") or 0)
+    if flow_direction and flow_hits > 0:
+        return {
+            "mode": "flow",
+            "direction": flow_direction,
+            "hits": flow_hits,
+            "summary": "Flow %s x%d" % (flow_direction, flow_hits),
+        }
+
+    course_direction = ("%s" % (route_shadow.get("dominant_course_direction") or "")).strip().upper()
+    course_hits = int(route_shadow.get("dominant_course_hits") or 0)
+    if course_direction and course_hits > 0:
+        return {
+            "mode": "course",
+            "direction": course_direction,
+            "hits": course_hits,
+            "summary": "Course %s x%d" % (course_direction, course_hits),
+        }
+
+    return {"mode": "", "direction": "", "hits": 0, "summary": ""}
+
+
 def _route_shadow_snapshot(parsed, now_dt=None):
     now_dt = now_dt or datetime.datetime.now()
     pickup_outcode = ("%s" % (parsed.get("pickup_outcode") or "")).upper()
@@ -1844,6 +1871,7 @@ def _route_shadow_snapshot(parsed, now_dt=None):
         "dominant_course_hits": 0,
         "dominant_flow_direction": "",
         "dominant_flow_hits": 0,
+        "direction_summary": "",
         "corridor_unique_cells": 0,
         "corridor_unique_segments": 0,
         "time_bucket": _traffic_time_bucket(now_dt),
@@ -1905,6 +1933,7 @@ def _route_shadow_snapshot(parsed, now_dt=None):
             "status_hint": _route_shadow_status_hint(net_score, samples, time_score, time_samples),
         }
     )
+    payload["direction_summary"] = _route_shadow_direction_summary(payload).get("summary") or ""
     return payload
 
 
@@ -3051,7 +3080,11 @@ def main():
             metrics["per_min_card"],
             metrics["per_mile_card"],
         )
-        body_text = "%s\n%s" % (body_line1, body_line2)
+        body_lines = [body_line1, body_line2]
+        route_direction_summary = ("%s" % (route_shadow.get("direction_summary") or "")).strip()
+        if route_direction_summary:
+            body_lines.append("Route Shadow %s" % route_direction_summary)
+        body_text = "\n".join(body_lines)
     _send_push_notification(title_line, body_text)
 
     t_global_end = time.perf_counter()
