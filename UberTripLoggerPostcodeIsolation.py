@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-26-route-direction-shadow-v29
+# version: 2026-06-26-route-direction-shadow-v30
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-26-route-direction-shadow-v29"
+SCRIPT_BUILD = "2026-06-26-route-direction-shadow-v30"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1821,31 +1821,66 @@ def _route_shadow_status_hint(net_score, samples, time_score, time_samples):
     return "none"
 
 
+def _opposite_direction_bin(direction):
+    direction_order = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    normalized = ("%s" % (direction or "")).strip().upper()
+    if normalized not in direction_order:
+        return ""
+    index = direction_order.index(normalized)
+    return direction_order[(index + 4) % len(direction_order)]
+
+
+def _counter_direction_hits(counter, primary_direction):
+    if not isinstance(counter, dict):
+        return {"direction": "", "hits": 0}
+    opposite = _opposite_direction_bin(primary_direction)
+    if not opposite:
+        return {"direction": "", "hits": 0}
+    return {
+        "direction": opposite,
+        "hits": int(counter.get(opposite) or 0),
+    }
+
+
 def _route_shadow_direction_summary(route_shadow):
     if not isinstance(route_shadow, dict):
-        return {"mode": "", "direction": "", "hits": 0, "summary": ""}
+        return {"mode": "", "direction": "", "hits": 0, "counter_direction": "", "counter_hits": 0, "summary": ""}
 
     flow_direction = ("%s" % (route_shadow.get("dominant_flow_direction") or "")).strip().upper()
     flow_hits = int(route_shadow.get("dominant_flow_hits") or 0)
+    flow_counter_direction = ("%s" % (route_shadow.get("counter_flow_direction") or "")).strip().upper()
+    flow_counter_hits = int(route_shadow.get("counter_flow_hits") or 0)
     if flow_direction and flow_hits > 0:
+        summary = "Flow %s x%d" % (flow_direction, flow_hits)
+        if flow_counter_direction and flow_counter_hits > 0:
+            summary += " | Opp %s x%d" % (flow_counter_direction, flow_counter_hits)
         return {
             "mode": "flow",
             "direction": flow_direction,
             "hits": flow_hits,
-            "summary": "Flow %s x%d" % (flow_direction, flow_hits),
+            "counter_direction": flow_counter_direction,
+            "counter_hits": flow_counter_hits,
+            "summary": summary,
         }
 
     course_direction = ("%s" % (route_shadow.get("dominant_course_direction") or "")).strip().upper()
     course_hits = int(route_shadow.get("dominant_course_hits") or 0)
+    course_counter_direction = ("%s" % (route_shadow.get("counter_course_direction") or "")).strip().upper()
+    course_counter_hits = int(route_shadow.get("counter_course_hits") or 0)
     if course_direction and course_hits > 0:
+        summary = "Course %s x%d" % (course_direction, course_hits)
+        if course_counter_direction and course_counter_hits > 0:
+            summary += " | Opp %s x%d" % (course_counter_direction, course_counter_hits)
         return {
             "mode": "course",
             "direction": course_direction,
             "hits": course_hits,
-            "summary": "Course %s x%d" % (course_direction, course_hits),
+            "counter_direction": course_counter_direction,
+            "counter_hits": course_counter_hits,
+            "summary": summary,
         }
 
-    return {"mode": "", "direction": "", "hits": 0, "summary": ""}
+    return {"mode": "", "direction": "", "hits": 0, "counter_direction": "", "counter_hits": 0, "summary": ""}
 
 
 def _route_shadow_snapshot(parsed, now_dt=None):
@@ -1869,8 +1904,12 @@ def _route_shadow_snapshot(parsed, now_dt=None):
         "unique_beacon_sectors": 0,
         "dominant_course_direction": "",
         "dominant_course_hits": 0,
+        "counter_course_direction": "",
+        "counter_course_hits": 0,
         "dominant_flow_direction": "",
         "dominant_flow_hits": 0,
+        "counter_flow_direction": "",
+        "counter_flow_hits": 0,
         "direction_summary": "",
         "corridor_unique_cells": 0,
         "corridor_unique_segments": 0,
@@ -1908,6 +1947,8 @@ def _route_shadow_snapshot(parsed, now_dt=None):
     net_score = int(route_bucket.get("net_score") or 0)
     time_score = float(weighted.get("score") or 0.0)
     time_samples = float(weighted.get("samples") or 0.0)
+    flow_counter = _counter_direction_hits(route_bucket.get("flow_direction_bins") or {}, route_bucket.get("dominant_flow_direction") or "")
+    course_counter = _counter_direction_hits(route_bucket.get("course_bins") or {}, route_bucket.get("dominant_course_direction") or "")
     payload.update(
         {
             "matched": True,
@@ -1920,8 +1961,12 @@ def _route_shadow_snapshot(parsed, now_dt=None):
             "unique_beacon_sectors": int(route_bucket.get("unique_beacon_sectors") or 0),
             "dominant_course_direction": route_bucket.get("dominant_course_direction") or "",
             "dominant_course_hits": int(route_bucket.get("dominant_course_hits") or 0),
+            "counter_course_direction": course_counter.get("direction") or "",
+            "counter_course_hits": int(course_counter.get("hits") or 0),
             "dominant_flow_direction": route_bucket.get("dominant_flow_direction") or "",
             "dominant_flow_hits": int(route_bucket.get("dominant_flow_hits") or 0),
+            "counter_flow_direction": flow_counter.get("direction") or "",
+            "counter_flow_hits": int(flow_counter.get("hits") or 0),
             "corridor_unique_cells": int(route_bucket.get("corridor_unique_cells") or 0),
             "corridor_unique_segments": int(route_bucket.get("corridor_unique_segments") or 0),
             "time_bucket_score": round(time_score, 2),
