@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-25-postcode-quality-gate-v23
+# version: 2026-06-25-postcode-quality-outputs-v24
 import hashlib
 import json
 import os
@@ -1025,7 +1025,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-25-postcode-quality-gate-v23"
+SCRIPT_BUILD = "2026-06-25-postcode-quality-outputs-v24"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1183,6 +1183,8 @@ def _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_s
         "dropoff_outcode": parsed.get("dropoff_outcode") or "",
         "pickup_sector": parsed.get("pickup_sector") or "",
         "dropoff_sector": parsed.get("dropoff_sector") or "",
+        "pickup_postcode_quality": parsed.get("pickup_postcode_quality") or "",
+        "dropoff_postcode_quality": parsed.get("dropoff_postcode_quality") or "",
         "pickup_min": float(parsed.get("pickup_min") or 0.0),
         "pickup_miles": float(parsed.get("pickup_miles") or 0.0),
         "trip_min": float(parsed.get("trip_min") or 0.0),
@@ -2737,6 +2739,8 @@ def main():
         "dropoff_outcode": parsed["dropoff_outcode"],
         "pickup_sector": parsed["pickup_sector"],
         "dropoff_sector": parsed["dropoff_sector"],
+        "pickup_postcode_quality": parsed.get("pickup_postcode_quality") or "",
+        "dropoff_postcode_quality": parsed.get("dropoff_postcode_quality") or "",
         "traffic_zone_status": traffic_verdict["status"],
         "traffic_zone_label": traffic_verdict["label"],
         "traffic_zone_scope": traffic_verdict["scope"],
