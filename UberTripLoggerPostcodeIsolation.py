@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-25-postcode-quality-outputs-v24
+# version: 2026-06-26-notification-traffic-compact-v25
 import hashlib
 import json
 import os
@@ -1960,6 +1960,40 @@ def _traffic_verdict_payload(status, label, scope, reason, time_bucket):
     }
 
 
+def _compact_traffic_title_label(parsed, traffic_verdict):
+    label = ("%s" % ((traffic_verdict or {}).get("label") or "")).strip()
+    scope = ("%s" % ((traffic_verdict or {}).get("scope") or "")).strip().lower()
+
+    pickup_sector = ("%s" % ((parsed or {}).get("pickup_sector") or "")).strip().upper()
+    dropoff_sector = ("%s" % ((parsed or {}).get("dropoff_sector") or "")).strip().upper()
+    pickup_outcode = ("%s" % ((parsed or {}).get("pickup_outcode") or "")).strip().upper()
+    dropoff_outcode = ("%s" % ((parsed or {}).get("dropoff_outcode") or "")).strip().upper()
+
+    if len(label) <= 8:
+        return label or "Zone"
+
+    if scope == "dropoff":
+        if dropoff_sector:
+            return dropoff_sector
+        if dropoff_outcode:
+            return dropoff_outcode
+    if scope == "pickup":
+        if pickup_sector:
+            return pickup_sector
+        if pickup_outcode:
+            return pickup_outcode
+
+    if dropoff_outcode:
+        return dropoff_outcode
+    if pickup_outcode:
+        return pickup_outcode
+
+    if not label:
+        return "Zone"
+    compact = re.sub(r"\s+", " ", label)
+    return compact[:8].rstrip(" ,.;-") or "Zone"
+
+
 def _postcode_quality_rank(value):
     ranks = {
         "none": 0,
@@ -2844,7 +2878,8 @@ def main():
             LOW_RATING_DECLINE_THRESHOLD,
         )
     else:
-        traffic_compact = "%s [%s]" % (traffic_verdict["emoji"], traffic_verdict["label"])
+        traffic_label_compact = _compact_traffic_title_label(parsed, traffic_verdict)
+        traffic_compact = "%s %s" % (traffic_verdict["emoji"], traffic_label_compact)
         title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s · %s" % (
             parsed["rating"] if parsed["rating"] else 0.0,
             parsed["price"],
