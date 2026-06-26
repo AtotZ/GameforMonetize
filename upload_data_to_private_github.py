@@ -2,7 +2,7 @@ import base64
 import datetime
 import glob
 import hashlib
-# version: 2026-06-26-private-data-upload-backlog-v13
+# version: 2026-06-26-private-data-upload-notify-v14
 import json
 import os
 import re
@@ -18,7 +18,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-26-private-upload-backlog-v13"
+SCRIPT_BUILD = "2026-06-26-private-upload-notify-v14"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 8
 REQUEST_RETRY_ATTEMPTS = 2
@@ -304,6 +304,29 @@ def _log(message):
     text = "%s" % (message or "")
     print(text)
     _append_console_log(text)
+
+
+def _send_local_notification(title, body):
+    if ObjCClass is None:
+        return False
+    try:
+        UNUserNotificationCenter = ObjCClass("UNUserNotificationCenter")
+        UNMutableNotificationContent = ObjCClass("UNMutableNotificationContent")
+        UNNotificationRequest = ObjCClass("UNNotificationRequest")
+        UNTimeIntervalNotificationTrigger = ObjCClass("UNTimeIntervalNotificationTrigger")
+        UNNotificationSound = ObjCClass("UNNotificationSound")
+        center = UNUserNotificationCenter.currentNotificationCenter()
+        content = UNMutableNotificationContent.alloc().init()
+        content.setTitle_("%s" % (title or "Pythonista"))
+        content.setBody_("%s" % (body or ""))
+        content.setSound_(UNNotificationSound.defaultSound())
+        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(0.2, False)
+        identifier = "PrivateUploadNotif-%d" % int(time.time() * 1000)
+        request = UNNotificationRequest.requestWithIdentifier_content_trigger_(identifier, content, trigger)
+        center.addNotificationRequest_withCompletionHandler_(request, None)
+        return True
+    except Exception:
+        return False
 
 
 def _read_invocation_context():
@@ -874,6 +897,27 @@ def main():
             config["repo"],
         )
     )
+    if invocation_context.get("invoked_by") != "update_from_github":
+        uploaded_count = len([item for item in results if item.get("status") == "uploaded"])
+        deferred_count = len([item for item in results if item.get("status") == "deferred_power_save"])
+        if failed_count == 0:
+            _send_local_notification(
+                "Upload done",
+                "Sent %d, deferred %d, unchanged %d." % (
+                    uploaded_count,
+                    deferred_count,
+                    len([item for item in results if item.get("status") == "skipped_unchanged"]),
+                ),
+            )
+        else:
+            _send_local_notification(
+                "Upload issue",
+                "Sent %d, failed %d, deferred %d." % (
+                    uploaded_count,
+                    failed_count,
+                    deferred_count,
+                ),
+            )
     _log("[private-upload] session end | %.3fs" % (time.perf_counter() - started))
 
 

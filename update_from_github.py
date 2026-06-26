@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-26-updater-defer-backlog-v21
+# version: 2026-06-26-updater-notify-v22
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-26-updater-v21"
+SCRIPT_BUILD = "2026-06-26-updater-v22"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -193,6 +193,29 @@ def _log(message):
     text = "%s" % (message or "")
     print(text)
     _append_console_log(text)
+
+
+def _send_local_notification(title, body):
+    if ObjCClass is None:
+        return False
+    try:
+        UNUserNotificationCenter = ObjCClass("UNUserNotificationCenter")
+        UNMutableNotificationContent = ObjCClass("UNMutableNotificationContent")
+        UNNotificationRequest = ObjCClass("UNNotificationRequest")
+        UNTimeIntervalNotificationTrigger = ObjCClass("UNTimeIntervalNotificationTrigger")
+        UNNotificationSound = ObjCClass("UNNotificationSound")
+        center = UNUserNotificationCenter.currentNotificationCenter()
+        content = UNMutableNotificationContent.alloc().init()
+        content.setTitle_("%s" % (title or "Pythonista"))
+        content.setBody_("%s" % (body or ""))
+        content.setSound_(UNNotificationSound.defaultSound())
+        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(0.2, False)
+        identifier = "UpdaterNotif-%d" % int(time.time() * 1000)
+        request = UNNotificationRequest.requestWithIdentifier_content_trigger_(identifier, content, trigger)
+        center.addNotificationRequest_withCompletionHandler_(request, None)
+        return True
+    except Exception:
+        return False
 
 
 def _download_text(url):
@@ -562,6 +585,35 @@ def main():
                 upload_summary.get("power_lite_force_reason") or "no",
                 upload_summary.get("error") or upload_summary.get("manifest_error") or "unknown",
             )
+        )
+    updated_count = len([item for item in results if item.get("status") == "downloaded"])
+    unchanged_count = len([item for item in results if item.get("status") == "skipped_unchanged"])
+    upload_summary = _summarize_private_upload(private_upload_result)
+    if private_upload_result.get("skipped_due_to_code_update"):
+        _send_local_notification(
+            "Updater done",
+            "Code updated %d, unchanged %d. Upload next run." % (
+                updated_count,
+                unchanged_count,
+            ),
+        )
+    elif private_upload_result.get("ok"):
+        _send_local_notification(
+            "Updater done",
+            "Code updated %d, unchanged %d. Upload sent %d, deferred %d." % (
+                updated_count,
+                unchanged_count,
+                upload_summary.get("uploaded_count", 0),
+                upload_summary.get("deferred_power_save_count", 0),
+            ),
+        )
+    else:
+        _send_local_notification(
+            "Updater issue",
+            "Code updated %d. Upload failed: %s" % (
+                updated_count,
+                upload_summary.get("error") or upload_summary.get("manifest_error") or "unknown",
+            ),
         )
     _log("[updater] session end | %.3fs" % (time.perf_counter() - started))
 

@@ -1,4 +1,4 @@
-# version: 2026-06-26-traffic-beacon-corridors-v11
+# version: 2026-06-26-traffic-beacon-notify-v12
 import datetime
 import glob
 import json
@@ -12,6 +12,11 @@ try:
     import location
 except Exception:
     location = None
+
+try:
+    from objc_util import ObjCClass
+except Exception:
+    ObjCClass = None
 
 
 ROOT_DIR = os.path.expanduser("~/Documents")
@@ -117,6 +122,36 @@ def _write_json(path, payload):
         os.makedirs(directory)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def _send_local_notification(title, body):
+    if ObjCClass is None:
+        return False
+    try:
+        UNUserNotificationCenter = ObjCClass("UNUserNotificationCenter")
+        UNMutableNotificationContent = ObjCClass("UNMutableNotificationContent")
+        UNNotificationRequest = ObjCClass("UNNotificationRequest")
+        UNTimeIntervalNotificationTrigger = ObjCClass("UNTimeIntervalNotificationTrigger")
+        UNNotificationSound = ObjCClass("UNNotificationSound")
+        center = UNUserNotificationCenter.currentNotificationCenter()
+        content = UNMutableNotificationContent.alloc().init()
+        content.setTitle_("%s" % (title or "Pythonista"))
+        content.setBody_("%s" % (body or ""))
+        content.setSound_(UNNotificationSound.defaultSound())
+        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(0.2, False)
+        identifier = "TrafficBeaconNotif-%d" % int(time.time() * 1000)
+        request = UNNotificationRequest.requestWithIdentifier_content_trigger_(identifier, content, trigger)
+        center.addNotificationRequest_withCompletionHandler_(request, None)
+        return True
+    except Exception:
+        return False
+
+
+def _compact_address(value, limit=72):
+    text = re.sub(r"\s+", " ", "%s" % (value or "")).strip(" ,.;-")
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip(" ,.;-") + "..."
 
 
 def _load_json_dict(path):
@@ -822,6 +857,10 @@ def main():
             elapsed,
         )
     )
+    _send_local_notification(
+        "Beacon saved %s" % (payload.get("postcode") or payload.get("outcode") or "no_postcode"),
+        _compact_address(payload.get("address") or payload.get("placemark", {}).get("name") or "Address unavailable"),
+    )
 
 
 if __name__ == "__main__":
@@ -829,5 +868,6 @@ if __name__ == "__main__":
         main()
     except Exception as exc:
         print("[traffic_beacon] failed: %s" % exc)
+        _send_local_notification("Beacon failed", "%s" % exc)
         raise SystemExit(1)
     raise SystemExit(0)
