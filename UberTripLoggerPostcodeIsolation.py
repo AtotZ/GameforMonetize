@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-26-notification-traffic-compact-v25
+# version: 2026-06-26-route-shadow-mode-v26
 import hashlib
 import json
 import os
@@ -1058,6 +1058,7 @@ OFFERS_HISTORY_DIR = os.path.join(OFFERS_DATA_DIR, "history")
 LOGS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "logs")
 DEBUG_DATA_DIR = os.path.join(DATA_ROOT_DIR, "debug")
 TRAFFIC_BEACON_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
+TRAFFIC_ROUTE_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
 ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
 TEXT_LOG_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
 LEDGER_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
@@ -1094,6 +1095,11 @@ CCZ_INWARD_O_FIX_RE = re.compile(r"\b((?:EC[1-4][A-Z]?|WC[12][A-Z]?|W1[A-Z]?|SW1
 
 VNImageRequestHandler = ObjCClass("VNImageRequestHandler")
 VNRecognizeTextRequest = ObjCClass("VNRecognizeTextRequest")
+
+_ROUTE_DB_CACHE = {
+    "mtime": None,
+    "payload": None,
+}
 
 
 def _load_state():
@@ -1140,6 +1146,15 @@ def _write_json(path, payload):
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
+def _load_json_dict(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
 def _write_text(path, text):
     _ensure_parent_dir(path)
     with open(path, "w", encoding="utf-8") as handle:
@@ -1172,7 +1187,7 @@ def _daily_jsonl_path(base_dir, stem, day_text):
     return os.path.join(base_dir, "%s-%s.jsonl" % (day, stem))
 
 
-def _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_str, ocr_sha1):
+def _write_active_offer(parsed, metrics, traffic_verdict, route_shadow, shortcut_source, now_str, ocr_sha1):
     payload = {
         "timestamp": now_str,
         "pickup_address": parsed.get("pickup_address") or "",
@@ -1203,6 +1218,7 @@ def _write_active_offer(parsed, metrics, traffic_verdict, shortcut_source, now_s
         "pay_status": metrics.get("pay_status") or "",
         "ccz_bonus_applied": bool(metrics.get("ccz_bonus_applied")),
         "is_reserved": bool(parsed.get("is_reserved")),
+        "route_shadow": route_shadow,
         "shortcut_source_tag": shortcut_source.get("tag") or "",
         "ocr_sha1": ocr_sha1 or "",
     }
@@ -1547,11 +1563,26 @@ def _load_traffic_beacon_db():
     try:
         with open(TRAFFIC_BEACON_DB_PATH, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
-        if isinstance(payload, dict):
-            return payload
+            if isinstance(payload, dict):
+                return payload
     except Exception:
         pass
     return {}
+
+
+def _load_traffic_route_db():
+    if not os.path.exists(TRAFFIC_ROUTE_DB_PATH):
+        return {}
+    try:
+        mtime = os.path.getmtime(TRAFFIC_ROUTE_DB_PATH)
+    except Exception:
+        return {}
+    if _ROUTE_DB_CACHE.get("mtime") == mtime and isinstance(_ROUTE_DB_CACHE.get("payload"), dict):
+        return _ROUTE_DB_CACHE.get("payload") or {}
+    payload = _load_json_dict(TRAFFIC_ROUTE_DB_PATH)
+    _ROUTE_DB_CACHE["mtime"] = mtime
+    _ROUTE_DB_CACHE["payload"] = payload
+    return payload
 
 
 def _parse_outcode_family(outcode):
@@ -1754,6 +1785,91 @@ def _positive_time_bucket_gate(score, samples, confidence, last_seen, now_dt, mi
             return True, "recent_high_confidence", age_days
         return False, "recent_not_high_confidence", age_days
     return False, "stale", age_days
+
+
+def _route_shadow_status_hint(net_score, samples, time_score, time_samples):
+    if int(time_samples or 0) >= 3 and float(time_score or 0.0) >= 3.0:
+        return "strong"
+    if int(samples or 0) >= 4 and float(net_score or 0.0) >= 4.0:
+        return "watch"
+    if int(samples or 0) > 0 or int(time_samples or 0) > 0:
+        return "weak"
+    return "none"
+
+
+def _route_shadow_snapshot(parsed, now_dt=None):
+    now_dt = now_dt or datetime.datetime.now()
+    pickup_outcode = ("%s" % (parsed.get("pickup_outcode") or "")).upper()
+    dropoff_outcode = ("%s" % (parsed.get("dropoff_outcode") or "")).upper()
+    route_key = "%s->%s" % (pickup_outcode or "UNK", dropoff_outcode or "UNK")
+    payload = {
+        "enabled": True,
+        "matched": False,
+        "source": "route_db_shadow",
+        "route_key": route_key,
+        "pickup_outcode": pickup_outcode,
+        "dropoff_outcode": dropoff_outcode,
+        "samples": 0,
+        "net_score": 0,
+        "confidence": "low",
+        "last_seen": "",
+        "unique_day_hits": 0,
+        "unique_beacon_outcodes": 0,
+        "unique_beacon_sectors": 0,
+        "time_bucket": _traffic_time_bucket(now_dt),
+        "time_bucket_score": 0.0,
+        "time_bucket_samples": 0.0,
+        "time_bucket_confidence": "low",
+        "time_bucket_last_seen": "",
+        "time_bucket_distinct_days": 0,
+        "time_bucket_day_keys": [],
+        "status_hint": "none",
+    }
+    if not pickup_outcode or not dropoff_outcode:
+        return payload
+
+    route_db = _load_traffic_route_db()
+    route_bucket = ((route_db.get("routes") or {}).get(route_key) or {})
+    if not isinstance(route_bucket, dict) or not route_bucket:
+        return payload
+
+    weighted = _weighted_fine_bucket_metrics(route_bucket, now_dt)
+    if not weighted.get("matched_buckets"):
+        coarse_leaf = _bucket_time_leaf(route_bucket, payload["time_bucket"])
+        weighted = {
+            "score": float(coarse_leaf.get("net_score") or 0.0),
+            "samples": float(coarse_leaf.get("samples") or 0.0),
+            "confidence": coarse_leaf.get("confidence") or "low",
+            "last_seen": coarse_leaf.get("last_seen") or "",
+            "matched_buckets": [payload["time_bucket"]] if coarse_leaf else [],
+            "distinct_days": len(_leaf_day_keys(coarse_leaf)),
+            "day_keys": _leaf_day_keys(coarse_leaf),
+        }
+
+    samples = int(route_bucket.get("samples") or 0)
+    net_score = int(route_bucket.get("net_score") or 0)
+    time_score = float(weighted.get("score") or 0.0)
+    time_samples = float(weighted.get("samples") or 0.0)
+    payload.update(
+        {
+            "matched": True,
+            "samples": samples,
+            "net_score": net_score,
+            "confidence": route_bucket.get("confidence") or "low",
+            "last_seen": route_bucket.get("last_seen") or "",
+            "unique_day_hits": int(route_bucket.get("unique_day_hits") or 0),
+            "unique_beacon_outcodes": int(route_bucket.get("unique_beacon_outcodes") or 0),
+            "unique_beacon_sectors": int(route_bucket.get("unique_beacon_sectors") or 0),
+            "time_bucket_score": round(time_score, 2),
+            "time_bucket_samples": round(time_samples, 2),
+            "time_bucket_confidence": weighted.get("confidence") or "low",
+            "time_bucket_last_seen": weighted.get("last_seen") or "",
+            "time_bucket_distinct_days": int(weighted.get("distinct_days") or 0),
+            "time_bucket_day_keys": weighted.get("day_keys") or [],
+            "status_hint": _route_shadow_status_hint(net_score, samples, time_score, time_samples),
+        }
+    )
+    return payload
 
 
 def _traffic_db_verdict(parsed, now_dt=None):
@@ -2744,6 +2860,7 @@ def main():
     debug = parse_result.get("debug") or {}
     metrics = _derive_offer_metrics(parsed)
     traffic_verdict = _traffic_zone_verdict(parsed)
+    route_shadow = _route_shadow_snapshot(parsed)
     low_rating_decision = _low_rating_decision(parsed, debug)
 
     now = datetime.datetime.now()
@@ -2780,6 +2897,7 @@ def main():
         "traffic_zone_scope": traffic_verdict["scope"],
         "traffic_zone_reason": traffic_verdict["reason"],
         "traffic_zone_time_bucket": traffic_verdict["time_bucket"],
+        "route_shadow": route_shadow,
         "vehicle_type": parsed["vehicle_type"],
         "surge_text": parsed["surge_text"],
         "is_reserved": parsed["is_reserved"],
@@ -2809,6 +2927,7 @@ def main():
         parsed,
         metrics,
         traffic_verdict,
+        route_shadow,
         shortcut_source,
         now_str,
         ocr_sha1,
@@ -2850,6 +2969,7 @@ def main():
         "today_totals": totals_after_append,
         "target_progress_local": target_insight,
         "traffic_verdict": traffic_verdict,
+        "route_shadow": route_shadow,
         "active_offer": active_offer_payload,
         "low_rating_decision": low_rating_decision,
     }
