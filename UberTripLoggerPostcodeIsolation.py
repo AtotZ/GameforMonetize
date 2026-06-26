@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-26-route-shadow-mode-v26
+# version: 2026-06-26-route-corridor-shadow-v27
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-25-postcode-quality-outputs-v24"
+SCRIPT_BUILD = "2026-06-26-route-corridor-shadow-v27"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1840,6 +1840,8 @@ def _route_shadow_snapshot(parsed, now_dt=None):
         "unique_day_hits": 0,
         "unique_beacon_outcodes": 0,
         "unique_beacon_sectors": 0,
+        "corridor_unique_cells": 0,
+        "corridor_unique_segments": 0,
         "time_bucket": _traffic_time_bucket(now_dt),
         "time_bucket_score": 0.0,
         "time_bucket_samples": 0.0,
@@ -1884,6 +1886,8 @@ def _route_shadow_snapshot(parsed, now_dt=None):
             "unique_day_hits": int(route_bucket.get("unique_day_hits") or 0),
             "unique_beacon_outcodes": int(route_bucket.get("unique_beacon_outcodes") or 0),
             "unique_beacon_sectors": int(route_bucket.get("unique_beacon_sectors") or 0),
+            "corridor_unique_cells": int(route_bucket.get("corridor_unique_cells") or 0),
+            "corridor_unique_segments": int(route_bucket.get("corridor_unique_segments") or 0),
             "time_bucket_score": round(time_score, 2),
             "time_bucket_samples": round(time_samples, 2),
             "time_bucket_confidence": weighted.get("confidence") or "low",

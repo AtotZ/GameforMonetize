@@ -1,7 +1,8 @@
-# version: 2026-06-26-traffic-beacon-coverage-metrics-v10
+# version: 2026-06-26-traffic-beacon-corridors-v11
 import datetime
 import glob
 import json
+import math
 import os
 import re
 import sys
@@ -27,6 +28,7 @@ ACTIVE_OFFER_MAX_AGE_SECONDS = 6 * 60 * 60
 CONFIDENCE_MEDIUM_MIN_SAMPLES = 3
 CONFIDENCE_HIGH_MIN_SAMPLES = 8
 TRAFFIC_FINE_BUCKET_MINUTES = 15
+CORRIDOR_CELL_SIZE_METERS = 200.0
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
@@ -201,6 +203,33 @@ def _empty_counter(with_time_buckets=True):
     }
 
 
+def _corridor_lon_step_degrees(latitude):
+    cos_lat = math.cos(math.radians(float(latitude or 0.0)))
+    if abs(cos_lat) < 0.01:
+        cos_lat = 0.01
+    return CORRIDOR_CELL_SIZE_METERS / (111320.0 * cos_lat)
+
+
+def _corridor_cell_key(latitude, longitude):
+    lat = _safe_float(latitude, 0.0)
+    lon = _safe_float(longitude, 0.0)
+    if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+        return "", 0.0, 0.0
+    lat_step = CORRIDOR_CELL_SIZE_METERS / 111320.0
+    lon_step = _corridor_lon_step_degrees(lat)
+    lat_center = round(round(lat / lat_step) * lat_step, 5)
+    lon_center = round(round(lon / lon_step) * lon_step, 5)
+    return "%0.5f,%0.5f" % (lat_center, lon_center), lat_center, lon_center
+
+
+def _corridor_segment_key(from_cell, to_cell):
+    from_key = ("%s" % (from_cell or "")).strip()
+    to_key = ("%s" % (to_cell or "")).strip()
+    if not from_key or not to_key or from_key == to_key:
+        return ""
+    return "%s>%s" % (from_key, to_key)
+
+
 def _refresh_bucket_coverage_metrics(bucket):
     if not isinstance(bucket, dict):
         return
@@ -227,6 +256,14 @@ def _refresh_bucket_coverage_metrics(bucket):
     beacon_sectors = bucket.get("beacon_sectors")
     if isinstance(beacon_sectors, dict):
         bucket["unique_beacon_sectors"] = len(beacon_sectors)
+
+    corridor_cells = bucket.get("corridor_cells")
+    if isinstance(corridor_cells, dict):
+        bucket["corridor_unique_cells"] = len(corridor_cells)
+
+    corridor_segments = bucket.get("corridor_segments")
+    if isinstance(corridor_segments, dict):
+        bucket["corridor_unique_segments"] = len(corridor_segments)
 
 
 def _bump_counter(bucket, status, timestamp):
@@ -514,9 +551,87 @@ def _route_bucket(active_offer):
         "unique_day_hits": 0,
         "beacon_outcodes": {},
         "beacon_sectors": {},
+        "corridor_cells": {},
+        "corridor_segments": {},
+        "corridor_unique_cells": 0,
+        "corridor_unique_segments": 0,
+        "corridor_last_cell": "",
+        "corridor_last_offer_timestamp": "",
+        "corridor_last_beacon_timestamp": "",
         "time_buckets": {},
         "time_windows_15m": {},
     }
+
+
+def _touch_route_corridor(bucket, active_offer, beacon_payload, status, beacon_outcode, beacon_sector):
+    if not isinstance(bucket, dict):
+        return
+    cell_key, cell_lat, cell_lon = _corridor_cell_key(
+        beacon_payload.get("lat"),
+        beacon_payload.get("lon"),
+    )
+    if not cell_key:
+        return
+
+    timestamp = beacon_payload.get("timestamp") or ""
+    offer_timestamp = active_offer.get("timestamp") or ""
+    corridor_cells = bucket.setdefault("corridor_cells", {})
+    corridor_segments = bucket.setdefault("corridor_segments", {})
+    cell_entry = corridor_cells.setdefault(
+        cell_key,
+        {
+            "cell": cell_key,
+            "lat": cell_lat,
+            "lon": cell_lon,
+            "hits": 0,
+            "traffic_count": 0,
+            "no_traffic_count": 0,
+            "first_seen": timestamp,
+            "last_seen": "",
+            "beacon_outcodes": {},
+            "beacon_sectors": {},
+        },
+    )
+    cell_entry["hits"] = int(cell_entry.get("hits") or 0) + 1
+    if status == "traffic":
+        cell_entry["traffic_count"] = int(cell_entry.get("traffic_count") or 0) + 1
+    else:
+        cell_entry["no_traffic_count"] = int(cell_entry.get("no_traffic_count") or 0) + 1
+    cell_entry["last_seen"] = timestamp or cell_entry.get("last_seen") or ""
+    if beacon_outcode:
+        cell_entry["beacon_outcodes"][beacon_outcode] = int(cell_entry["beacon_outcodes"].get(beacon_outcode) or 0) + 1
+    if beacon_sector:
+        cell_entry["beacon_sectors"][beacon_sector] = int(cell_entry["beacon_sectors"].get(beacon_sector) or 0) + 1
+
+    previous_offer_timestamp = "%s" % (bucket.get("corridor_last_offer_timestamp") or "")
+    previous_cell = "%s" % (bucket.get("corridor_last_cell") or "")
+    if offer_timestamp and previous_offer_timestamp == offer_timestamp and previous_cell and previous_cell != cell_key:
+        segment_key = _corridor_segment_key(previous_cell, cell_key)
+        if segment_key:
+            segment_entry = corridor_segments.setdefault(
+                segment_key,
+                {
+                    "segment": segment_key,
+                    "from_cell": previous_cell,
+                    "to_cell": cell_key,
+                    "hits": 0,
+                    "traffic_count": 0,
+                    "no_traffic_count": 0,
+                    "first_seen": timestamp,
+                    "last_seen": "",
+                },
+            )
+            segment_entry["hits"] = int(segment_entry.get("hits") or 0) + 1
+            if status == "traffic":
+                segment_entry["traffic_count"] = int(segment_entry.get("traffic_count") or 0) + 1
+            else:
+                segment_entry["no_traffic_count"] = int(segment_entry.get("no_traffic_count") or 0) + 1
+            segment_entry["last_seen"] = timestamp or segment_entry.get("last_seen") or ""
+
+    bucket["corridor_last_cell"] = cell_key
+    bucket["corridor_last_offer_timestamp"] = offer_timestamp
+    bucket["corridor_last_beacon_timestamp"] = timestamp
+    _refresh_bucket_coverage_metrics(bucket)
 
 
 def _update_route_db(active_offer, beacon_payload):
@@ -574,6 +689,7 @@ def _update_route_db(active_offer, beacon_payload):
         bucket["beacon_outcodes"][beacon_outcode] = int(bucket["beacon_outcodes"].get(beacon_outcode) or 0) + 1
     if beacon_sector:
         bucket["beacon_sectors"][beacon_sector] = int(bucket["beacon_sectors"].get(beacon_sector) or 0) + 1
+    _touch_route_corridor(bucket, active_offer, beacon_payload, status, beacon_outcode, beacon_sector)
     _refresh_bucket_coverage_metrics(bucket)
     route_db["total_routes"] = len(routes)
     _write_json(ROUTE_DB_JSON_PATH, route_db)
@@ -585,6 +701,8 @@ def _update_route_db(active_offer, beacon_payload):
         "unique_day_hits": bucket.get("unique_day_hits") or 0,
         "unique_beacon_outcodes": bucket.get("unique_beacon_outcodes") or 0,
         "unique_beacon_sectors": bucket.get("unique_beacon_sectors") or 0,
+        "corridor_unique_cells": bucket.get("corridor_unique_cells") or 0,
+        "corridor_unique_segments": bucket.get("corridor_unique_segments") or 0,
     }
 
 
