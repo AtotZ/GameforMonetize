@@ -3053,7 +3053,7 @@ def main():
     ))
 
 
-def _looks_like_offer_text(text):
+def _looks_like_shortcut_offer_text(text):
     text = ("%s" % (text or "")).strip()
     if len(text) < 12:
         return False
@@ -3106,11 +3106,11 @@ def _consume_shortcut_offer_text_file():
                     "tag": _shortcut_source_tag(path),
                     "bytes": len(text.encode("utf-8", errors="ignore")),
                     "exists": True,
-                    "looks_like_offer": _looks_like_offer_text(text),
+                    "looks_like_offer": _looks_like_shortcut_offer_text(text),
                 }
                 if payload["bytes"] > 0 and best_invalid_payload is None:
                     best_invalid_payload = payload
-                if not _looks_like_offer_text(text):
+                if not _looks_like_shortcut_offer_text(text):
                     continue
                 try:
                     with open(path, "w", encoding="utf-8") as handle:
