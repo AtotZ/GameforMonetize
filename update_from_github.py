@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-26-updater-manifest-bypass-v20
+# version: 2026-06-26-updater-defer-backlog-v21
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-26-updater-v20"
+SCRIPT_BUILD = "2026-06-26-updater-v21"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -394,6 +394,11 @@ def _summarize_private_upload(result):
         summary["deferred_power_save_count"] = len(
             [item for item in upload_results if item.get("status") == "deferred_power_save"]
         )
+        summary["deferred_backlog_count"] = int(status_payload.get("deferred_backlog_count") or 0)
+        summary["deferred_backlog_day_count"] = int(status_payload.get("deferred_backlog_day_count") or 0)
+        summary["deferred_consecutive_runs"] = int(status_payload.get("deferred_consecutive_runs") or 0)
+        summary["power_lite_forced_full"] = bool(status_payload.get("power_lite_forced_full"))
+        summary["power_lite_force_reason"] = status_payload.get("power_lite_force_reason") or ""
         summary["manifest_uploaded"] = bool(status_payload.get("manifest_uploaded"))
         summary["manifest_error"] = status_payload.get("manifest_error") or ""
         summary["power_lite_mode"] = bool(status_payload.get("power_lite_mode"))
@@ -523,7 +528,7 @@ def main():
     elif private_upload_result.get("ok"):
         upload_summary = _summarize_private_upload(private_upload_result)
         _log(
-            "[updater] private upload ok | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s deferred=%s power_lite=%s | at=%s"
+            "[updater] private upload ok | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s deferred=%s backlog=%s days=%s consecutive=%s power_lite=%s forced_full=%s | at=%s"
             % (
                 upload_summary.get("uploaded_count", 0),
                 upload_summary.get("skipped_unchanged_count", 0),
@@ -531,14 +536,18 @@ def main():
                 upload_summary.get("too_large_count", 0),
                 upload_summary.get("failed_count", 0),
                 upload_summary.get("deferred_power_save_count", 0),
+                upload_summary.get("deferred_backlog_count", 0),
+                upload_summary.get("deferred_backlog_day_count", 0),
+                upload_summary.get("deferred_consecutive_runs", 0),
                 "yes" if upload_summary.get("power_lite_mode") else "no",
+                upload_summary.get("power_lite_force_reason") or "no",
                 upload_summary.get("timestamp") or "",
             )
         )
     else:
         upload_summary = _summarize_private_upload(private_upload_result)
         _log(
-            "[updater] private upload failed | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s deferred=%s power_lite=%s | error=%s"
+            "[updater] private upload failed | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s deferred=%s backlog=%s days=%s consecutive=%s power_lite=%s forced_full=%s | error=%s"
             % (
                 upload_summary.get("uploaded_count", 0),
                 upload_summary.get("skipped_unchanged_count", 0),
@@ -546,7 +555,11 @@ def main():
                 upload_summary.get("too_large_count", 0),
                 upload_summary.get("failed_count", 0),
                 upload_summary.get("deferred_power_save_count", 0),
+                upload_summary.get("deferred_backlog_count", 0),
+                upload_summary.get("deferred_backlog_day_count", 0),
+                upload_summary.get("deferred_consecutive_runs", 0),
                 "yes" if upload_summary.get("power_lite_mode") else "no",
+                upload_summary.get("power_lite_force_reason") or "no",
                 upload_summary.get("error") or upload_summary.get("manifest_error") or "unknown",
             )
         )

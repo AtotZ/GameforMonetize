@@ -2,9 +2,10 @@ import base64
 import datetime
 import glob
 import hashlib
-# version: 2026-06-25-private-data-upload-ledger-v10
+# version: 2026-06-26-private-data-upload-backlog-v13
 import json
 import os
+import re
 import socket
 import time
 import urllib.error
@@ -17,7 +18,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-26-private-upload-power-lite-v12"
+SCRIPT_BUILD = "2026-06-26-private-upload-backlog-v13"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 8
 REQUEST_RETRY_ATTEMPTS = 2
@@ -27,6 +28,9 @@ MAX_CONSOLE_LOG_LINES = 400
 TRIMMED_CONSOLE_LOG_LINES = 250
 MAX_CONSOLE_LOG_BYTES = 48 * 1024
 POWER_LITE_BATTERY_MAX_PCT = 18
+FORCE_FULL_UPLOAD_BACKLOG_COUNT = 12
+FORCE_FULL_UPLOAD_BACKLOG_DAYS = 2
+FORCE_FULL_UPLOAD_CONSECUTIVE_RUNS = 3
 POWER_LITE_ALLOWED_LABELS = {
     "active_offer",
     "offer_latest_debug",
@@ -199,8 +203,85 @@ def _apply_power_lite_filter(file_specs):
         if label in POWER_LITE_ALLOWED_LABELS:
             kept.append(item)
         else:
-            deferred.append(label or _normalize_rel_path(item.get("remote_rel_path") or ""))
+            deferred.append(dict(item or {}))
     return kept, deferred
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _deferred_signature(item):
+    local_rel_path = _normalize_rel_path(item.get("local_rel_path") or "")
+    local_rel_glob = _normalize_rel_path(item.get("local_rel_glob") or "")
+    remote_rel_path = _normalize_rel_path(item.get("remote_rel_path") or "")
+    remote_rel_dir = _normalize_rel_path(item.get("remote_rel_dir") or "")
+    return local_rel_path or local_rel_glob or remote_rel_path or remote_rel_dir or ("%s" % (item.get("label") or "")).strip()
+
+
+def _deferred_day_key(item):
+    probe = " ".join(
+        [
+            "%s" % (item.get("local_rel_path") or ""),
+            "%s" % (item.get("local_rel_glob") or ""),
+            "%s" % (item.get("remote_rel_path") or ""),
+            "%s" % (item.get("remote_rel_dir") or ""),
+        ]
+    )
+    match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", probe)
+    return match.group(1) if match else ""
+
+
+def _merge_deferred_backlog(previous_entries, deferred_items, timestamp_text):
+    merged = {}
+    if isinstance(previous_entries, dict):
+        for signature, entry in previous_entries.items():
+            if not isinstance(entry, dict):
+                continue
+            merged["%s" % signature] = {
+                "label": "%s" % (entry.get("label") or ""),
+                "signature": "%s" % (entry.get("signature") or signature),
+                "day_key": "%s" % (entry.get("day_key") or ""),
+                "local_rel_path": _normalize_rel_path(entry.get("local_rel_path") or ""),
+                "remote_rel_path": _normalize_rel_path(entry.get("remote_rel_path") or ""),
+                "first_deferred_at": "%s" % (entry.get("first_deferred_at") or timestamp_text),
+                "last_deferred_at": "%s" % (entry.get("last_deferred_at") or timestamp_text),
+            }
+    for item in deferred_items or []:
+        signature = _deferred_signature(item)
+        if not signature:
+            continue
+        existing = merged.get(signature) or {}
+        merged[signature] = {
+            "label": ("%s" % (item.get("label") or "")).strip() or signature,
+            "signature": signature,
+            "day_key": _deferred_day_key(item),
+            "local_rel_path": _normalize_rel_path(item.get("local_rel_path") or item.get("local_rel_glob") or ""),
+            "remote_rel_path": _normalize_rel_path(item.get("remote_rel_path") or item.get("remote_rel_dir") or ""),
+            "first_deferred_at": "%s" % (existing.get("first_deferred_at") or timestamp_text),
+            "last_deferred_at": timestamp_text,
+        }
+    return merged
+
+
+def _deferred_backlog_summary(entries):
+    if not isinstance(entries, dict):
+        return {"count": 0, "day_keys": [], "day_count": 0}
+    day_keys = sorted(
+        {
+            ("%s" % ((entry or {}).get("day_key") or "")).strip()
+            for entry in entries.values()
+            if ("%s" % ((entry or {}).get("day_key") or "")).strip()
+        }
+    )
+    return {
+        "count": len(entries),
+        "day_keys": day_keys,
+        "day_count": len(day_keys),
+    }
 
 
 def _append_console_log(message):
@@ -642,26 +723,81 @@ def _upload_manifest(config, manifest):
 
 def main():
     started = time.perf_counter()
-    _log("[private-upload] session start | %s | %s" % (_timestamp(), SCRIPT_BUILD))
+    now_text = _timestamp()
+    _log("[private-upload] session start | %s | %s" % (now_text, SCRIPT_BUILD))
     config = _load_config()
     power_snapshot = _power_snapshot()
+    previous_status = _read_json(STATUS_PATH)
     cache_payload = _load_cache(config)
     invocation_context = _read_invocation_context()
     file_specs = list(config["files"] or [])
-    power_lite_mode = _should_use_power_lite_mode(power_snapshot)
+    power_lite_requested = _should_use_power_lite_mode(power_snapshot)
+    power_lite_mode = power_lite_requested
+    deferred_items = []
     deferred_labels = []
-    if power_lite_mode:
-        file_specs, deferred_labels = _apply_power_lite_filter(file_specs)
-        _log(
-            "[private-upload] power-lite mode | battery=%s%% state=%s low_power=%s thermal=%s deferred=%d"
-            % (
-                power_snapshot.get("battery_level_pct"),
-                power_snapshot.get("battery_state") or "unknown",
-                "yes" if power_snapshot.get("low_power_mode") else "no",
-                power_snapshot.get("thermal_state") or "unknown",
-                len(deferred_labels),
-            )
+    power_lite_force_reason = ""
+    deferred_backlog_entries = {}
+    deferred_consecutive_runs = 0
+    if power_lite_requested:
+        previous_deferred_backlog = {}
+        if isinstance(previous_status, dict):
+            previous_deferred_backlog = previous_status.get("deferred_backlog_entries") or {}
+        previous_consecutive_runs = _safe_int(
+            (previous_status or {}).get("deferred_consecutive_runs"),
+            0,
         )
+        file_specs_power_lite, deferred_items = _apply_power_lite_filter(file_specs)
+        projected_backlog_entries = _merge_deferred_backlog(
+            previous_deferred_backlog,
+            deferred_items,
+            now_text,
+        )
+        projected_backlog_summary = _deferred_backlog_summary(projected_backlog_entries)
+        projected_consecutive_runs = previous_consecutive_runs + (1 if deferred_items else 0)
+        if projected_backlog_summary["count"] >= FORCE_FULL_UPLOAD_BACKLOG_COUNT:
+            power_lite_force_reason = "backlog_count"
+        elif projected_backlog_summary["day_count"] >= FORCE_FULL_UPLOAD_BACKLOG_DAYS:
+            power_lite_force_reason = "backlog_days"
+        elif projected_consecutive_runs >= FORCE_FULL_UPLOAD_CONSECUTIVE_RUNS:
+            power_lite_force_reason = "consecutive_runs"
+        if power_lite_force_reason:
+            power_lite_mode = False
+            deferred_items = []
+            deferred_labels = []
+            _log(
+                "[private-upload] power-lite bypass | reason=%s backlog=%d days=%d consecutive=%d"
+                % (
+                    power_lite_force_reason,
+                    projected_backlog_summary["count"],
+                    projected_backlog_summary["day_count"],
+                    projected_consecutive_runs,
+                )
+            )
+        else:
+            file_specs = file_specs_power_lite
+            deferred_labels = [
+                ("%s" % (item.get("label") or "")).strip() or _deferred_signature(item)
+                for item in deferred_items
+            ]
+            deferred_backlog_entries = projected_backlog_entries
+            deferred_consecutive_runs = projected_consecutive_runs
+            backlog_summary = _deferred_backlog_summary(deferred_backlog_entries)
+            _log(
+                "[private-upload] power-lite mode | battery=%s%% state=%s low_power=%s thermal=%s deferred=%d backlog=%d days=%d consecutive=%d"
+                % (
+                    power_snapshot.get("battery_level_pct"),
+                    power_snapshot.get("battery_state") or "unknown",
+                    "yes" if power_snapshot.get("low_power_mode") else "no",
+                    power_snapshot.get("thermal_state") or "unknown",
+                    len(deferred_labels),
+                    backlog_summary["count"],
+                    backlog_summary["day_count"],
+                    deferred_consecutive_runs,
+                )
+            )
+    if not power_lite_mode:
+        deferred_backlog_entries = {}
+        deferred_consecutive_runs = 0
     results = []
     failed_count = 0
     for item in file_specs:
@@ -678,10 +814,12 @@ def main():
                     "error": "%s" % exc,
                 }
             )
-    for label in deferred_labels:
+    for item, label in zip(deferred_items, deferred_labels):
         results.append(
             {
                 "label": label,
+                "local_rel_path": _normalize_rel_path(item.get("local_rel_path") or item.get("local_rel_glob") or ""),
+                "remote_rel_path": _normalize_rel_path(item.get("remote_rel_path") or item.get("remote_rel_dir") or ""),
                 "status": "deferred_power_save",
             }
         )
@@ -697,7 +835,7 @@ def main():
     _save_cache(cache_payload)
     status = {
         "ok": failed_count == 0,
-        "timestamp": _timestamp(),
+        "timestamp": now_text,
         "script_build": SCRIPT_BUILD,
         "invocation_context": invocation_context,
         "repo": "%s/%s" % (config["owner"], config["repo"]),
@@ -705,8 +843,16 @@ def main():
         "remote_root": config["remote_root"],
         "bootstrap": config.get("bootstrap"),
         "power_snapshot": power_snapshot,
+        "power_lite_requested": power_lite_requested,
         "power_lite_mode": power_lite_mode,
+        "power_lite_forced_full": bool(power_lite_force_reason),
+        "power_lite_force_reason": power_lite_force_reason,
         "deferred_labels": deferred_labels,
+        "deferred_backlog_entries": deferred_backlog_entries,
+        "deferred_backlog_count": _deferred_backlog_summary(deferred_backlog_entries)["count"],
+        "deferred_backlog_day_keys": _deferred_backlog_summary(deferred_backlog_entries)["day_keys"],
+        "deferred_backlog_day_count": _deferred_backlog_summary(deferred_backlog_entries)["day_count"],
+        "deferred_consecutive_runs": deferred_consecutive_runs,
         "manifest_uploaded": should_upload_manifest,
         "manifest_error": manifest_error,
         "failed_count": failed_count,
@@ -715,13 +861,15 @@ def main():
     }
     _write_json(STATUS_PATH, status)
     _log(
-        "[private-upload] uploaded=%d skipped=%d missing=%d too_large=%d failed=%d repo=%s/%s"
+        "[private-upload] uploaded=%d skipped=%d missing=%d too_large=%d failed=%d backlog=%d days=%d repo=%s/%s"
         % (
             len([item for item in results if item.get("status") == "uploaded"]),
             len([item for item in results if item.get("status") == "skipped_unchanged"]),
             len([item for item in results if item.get("status") == "missing_local"]),
             len([item for item in results if item.get("status") == "too_large"]),
             failed_count,
+            status["deferred_backlog_count"],
+            status["deferred_backlog_day_count"],
             config["owner"],
             config["repo"],
         )
