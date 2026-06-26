@@ -5,15 +5,18 @@ import hashlib
 # version: 2026-06-25-private-data-upload-ledger-v10
 import json
 import os
+import socket
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-25-private-upload-v10"
+SCRIPT_BUILD = "2026-06-26-private-upload-timeout-guard-v11"
 API_ROOT = "https://api.github.com"
-REQUEST_TIMEOUT_SECONDS = 20
+REQUEST_TIMEOUT_SECONDS = 8
+REQUEST_RETRY_ATTEMPTS = 2
+REQUEST_RETRY_SLEEP_SECONDS = 0.75
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 MAX_CONSOLE_LOG_LINES = 400
 TRIMMED_CONSOLE_LOG_LINES = 250
@@ -337,8 +340,27 @@ def _api_request(url, token, method="GET", body=None):
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-        raw = response.read()
+    raw = b""
+    last_error = None
+    for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                raw = response.read()
+            last_error = None
+            break
+        except Exception as exc:
+            last_error = exc
+            is_timeout = isinstance(exc, socket.timeout) or isinstance(exc, TimeoutError)
+            if not is_timeout and isinstance(exc, urllib.error.URLError):
+                reason = getattr(exc, "reason", None)
+                is_timeout = isinstance(reason, socket.timeout) or isinstance(reason, TimeoutError) or ("timed out" in ("%s" % reason).lower())
+            if not is_timeout and "timed out" in ("%s" % exc).lower():
+                is_timeout = True
+            if (not is_timeout) or attempt >= REQUEST_RETRY_ATTEMPTS:
+                raise
+            time.sleep(REQUEST_RETRY_SLEEP_SECONDS)
+    if last_error is not None:
+        raise last_error
     if not raw:
         return {}
     return json.loads(raw.decode("utf-8"))
@@ -534,15 +556,33 @@ def main():
     cache_payload = _load_cache(config)
     invocation_context = _read_invocation_context()
     results = []
+    failed_count = 0
     for item in config["files"]:
-        results.append(_upload_one(config, item, cache_payload))
+        try:
+            results.append(_upload_one(config, item, cache_payload))
+        except Exception as exc:
+            failed_count += 1
+            results.append(
+                {
+                    "label": item.get("label") or item.get("remote_rel_path") or "",
+                    "local_rel_path": _normalize_rel_path(item.get("local_rel_path") or ""),
+                    "remote_rel_path": _normalize_rel_path(item.get("remote_rel_path") or ""),
+                    "status": "upload_failed",
+                    "error": "%s" % exc,
+                }
+            )
     manifest = _build_manifest(results, invocation_context)
-    should_upload_manifest = any(item.get("status") != "skipped_unchanged" for item in results)
+    should_upload_manifest = any(item.get("status") == "uploaded" for item in results)
+    manifest_error = ""
     if should_upload_manifest:
-        _upload_manifest(config, manifest)
+        try:
+            _upload_manifest(config, manifest)
+        except Exception as exc:
+            manifest_error = "%s" % exc
+            failed_count += 1
     _save_cache(cache_payload)
     status = {
-        "ok": True,
+        "ok": failed_count == 0,
         "timestamp": _timestamp(),
         "script_build": SCRIPT_BUILD,
         "invocation_context": invocation_context,
@@ -551,17 +591,20 @@ def main():
         "remote_root": config["remote_root"],
         "bootstrap": config.get("bootstrap"),
         "manifest_uploaded": should_upload_manifest,
+        "manifest_error": manifest_error,
+        "failed_count": failed_count,
         "results": results,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     _write_json(STATUS_PATH, status)
     _log(
-        "[private-upload] uploaded=%d skipped=%d missing=%d too_large=%d repo=%s/%s"
+        "[private-upload] uploaded=%d skipped=%d missing=%d too_large=%d failed=%d repo=%s/%s"
         % (
             len([item for item in results if item.get("status") == "uploaded"]),
             len([item for item in results if item.get("status") == "skipped_unchanged"]),
             len([item for item in results if item.get("status") == "missing_local"]),
             len([item for item in results if item.get("status") == "too_large"]),
+            failed_count,
             config["owner"],
             config["repo"],
         )

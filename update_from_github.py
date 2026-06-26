@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-25-updater-ledger-sync-v17
+# version: 2026-06-26-updater-private-upload-guard-v18
 import json
 import os
 import re
@@ -10,7 +10,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-25-updater-v17"
+SCRIPT_BUILD = "2026-06-26-updater-v18"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -337,7 +337,11 @@ def _summarize_private_upload(result):
         summary["too_large_count"] = len(
             [item for item in upload_results if item.get("status") == "too_large"]
         )
+        summary["failed_count"] = len(
+            [item for item in upload_results if item.get("status") == "upload_failed"]
+        )
         summary["manifest_uploaded"] = bool(status_payload.get("manifest_uploaded"))
+        summary["manifest_error"] = status_payload.get("manifest_error") or ""
     if result.get("error"):
         summary["error"] = result.get("error")
     if "exit_code" in result:
@@ -477,17 +481,29 @@ def main():
     elif private_upload_result.get("ok"):
         upload_summary = _summarize_private_upload(private_upload_result)
         _log(
-            "[updater] private upload ok | uploaded=%s skipped=%s missing=%s too_large=%s | at=%s"
+            "[updater] private upload ok | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s | at=%s"
             % (
                 upload_summary.get("uploaded_count", 0),
                 upload_summary.get("skipped_unchanged_count", 0),
                 upload_summary.get("missing_count", 0),
                 upload_summary.get("too_large_count", 0),
+                upload_summary.get("failed_count", 0),
                 upload_summary.get("timestamp") or "",
             )
         )
     else:
-        _log("[updater] private upload failed: %s" % (private_upload_result.get("error") or "unknown"))
+        upload_summary = _summarize_private_upload(private_upload_result)
+        _log(
+            "[updater] private upload failed | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s | error=%s"
+            % (
+                upload_summary.get("uploaded_count", 0),
+                upload_summary.get("skipped_unchanged_count", 0),
+                upload_summary.get("missing_count", 0),
+                upload_summary.get("too_large_count", 0),
+                upload_summary.get("failed_count", 0),
+                upload_summary.get("error") or upload_summary.get("manifest_error") or "unknown",
+            )
+        )
     _log("[updater] session end | %.3fs" % (time.perf_counter() - started))
 
 
