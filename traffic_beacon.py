@@ -1,4 +1,4 @@
-# version: 2026-06-26-traffic-beacon-direction-shadow-v13
+# version: 2026-06-27-traffic-beacon-centroid-route-v14
 import datetime
 import glob
 import json
@@ -309,9 +309,35 @@ def _top_counter_item(counter):
     return ranked[0] if ranked else ("", 0)
 
 
+def _refresh_geo_metrics(bucket):
+    if not isinstance(bucket, dict):
+        return
+    samples = int(bucket.get("geo_samples") or 0)
+    if samples <= 0:
+        return
+    lat_sum = float(bucket.get("lat_sum") or 0.0)
+    lon_sum = float(bucket.get("lon_sum") or 0.0)
+    bucket["centroid_lat"] = round(lat_sum / float(samples), 6)
+    bucket["centroid_lon"] = round(lon_sum / float(samples), 6)
+
+
+def _touch_geo_point(bucket, latitude, longitude):
+    if not isinstance(bucket, dict):
+        return
+    lat = _safe_float(latitude, 0.0)
+    lon = _safe_float(longitude, 0.0)
+    if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+        return
+    bucket["geo_samples"] = int(bucket.get("geo_samples") or 0) + 1
+    bucket["lat_sum"] = float(bucket.get("lat_sum") or 0.0) + lat
+    bucket["lon_sum"] = float(bucket.get("lon_sum") or 0.0) + lon
+    _refresh_geo_metrics(bucket)
+
+
 def _refresh_bucket_coverage_metrics(bucket):
     if not isinstance(bucket, dict):
         return
+    _refresh_geo_metrics(bucket)
     bucket["raw_beacon_hits"] = int(bucket.get("samples") or 0)
     days_seen = bucket.get("days_seen")
     bucket["unique_day_hits"] = len(days_seen) if isinstance(days_seen, dict) else 0
@@ -434,11 +460,17 @@ def _build_beacon_db(history):
                     "family_letters": family_letters,
                     "district_number": district_number,
                     "district_suffix": district_suffix,
+                    "geo_samples": 0,
+                    "lat_sum": 0.0,
+                    "lon_sum": 0.0,
+                    "centroid_lat": 0.0,
+                    "centroid_lon": 0.0,
                     "sector_hits": {},
                     **_empty_counter()
                 },
             )
             _bump_counter(outcode_bucket, status, timestamp)
+            _touch_geo_point(outcode_bucket, entry.get("lat"), entry.get("lon"))
             if sector:
                 outcode_bucket["sector_hits"][sector] = int(outcode_bucket["sector_hits"].get(sector) or 0) + 1
             _refresh_bucket_coverage_metrics(outcode_bucket)
@@ -449,10 +481,16 @@ def _build_beacon_db(history):
                 {
                     "sector": sector,
                     "outcode": outcode,
+                    "geo_samples": 0,
+                    "lat_sum": 0.0,
+                    "lon_sum": 0.0,
+                    "centroid_lat": 0.0,
+                    "centroid_lon": 0.0,
                     **_empty_counter()
                 },
             )
             _bump_counter(sector_bucket, status, timestamp)
+            _touch_geo_point(sector_bucket, entry.get("lat"), entry.get("lon"))
 
         if family_letters and district_number is not None:
             family_bucket = db["families"].setdefault(
@@ -550,11 +588,17 @@ def _update_beacon_db_incremental(db, entry):
                 "family_letters": family_letters,
                 "district_number": district_number,
                 "district_suffix": district_suffix,
+                "geo_samples": 0,
+                "lat_sum": 0.0,
+                "lon_sum": 0.0,
+                "centroid_lat": 0.0,
+                "centroid_lon": 0.0,
                 "sector_hits": {},
                 **_empty_counter()
             },
         )
         _bump_counter(outcode_bucket, status, timestamp)
+        _touch_geo_point(outcode_bucket, entry.get("lat"), entry.get("lon"))
         if sector:
             outcode_bucket["sector_hits"][sector] = int(outcode_bucket["sector_hits"].get(sector) or 0) + 1
         _refresh_bucket_coverage_metrics(outcode_bucket)
@@ -565,10 +609,16 @@ def _update_beacon_db_incremental(db, entry):
             {
                 "sector": sector,
                 "outcode": outcode,
+                "geo_samples": 0,
+                "lat_sum": 0.0,
+                "lon_sum": 0.0,
+                "centroid_lat": 0.0,
+                "centroid_lon": 0.0,
                 **_empty_counter()
             },
         )
         _bump_counter(sector_bucket, status, timestamp)
+        _touch_geo_point(sector_bucket, entry.get("lat"), entry.get("lon"))
 
     if family_letters and district_number is not None:
         family_bucket = db["families"].setdefault(

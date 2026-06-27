@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-26-route-direction-shadow-v30
+# version: 2026-06-27-route-beacon-line-shadow-v31
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-26-route-direction-shadow-v30"
+SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v31"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1077,6 +1077,7 @@ STATE_PATH = os.path.join(SCRIPT_DIR, ".uber_triplogger_postcode_isolation_state
 ROOT_DIR = os.path.expanduser("~/Documents")
 DATA_ROOT_DIR = os.path.join(ROOT_DIR, "TestSubjextData")
 TRAFFIC_DATA_DIR = os.path.join(DATA_ROOT_DIR, "traffic")
+TRAFFIC_HISTORY_DIR = os.path.join(TRAFFIC_DATA_DIR, "history")
 OFFERS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "offers")
 OFFERS_HISTORY_DIR = os.path.join(OFFERS_DATA_DIR, "history")
 LOGS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "logs")
@@ -1211,7 +1212,7 @@ def _daily_jsonl_path(base_dir, stem, day_text):
     return os.path.join(base_dir, "%s-%s.jsonl" % (day, stem))
 
 
-def _write_active_offer(parsed, metrics, traffic_verdict, route_shadow, shortcut_source, now_str, ocr_sha1):
+def _write_active_offer(parsed, metrics, traffic_verdict, route_shadow, route_line_shadow, shortcut_source, now_str, ocr_sha1):
     payload = {
         "timestamp": now_str,
         "pickup_address": parsed.get("pickup_address") or "",
@@ -1243,6 +1244,7 @@ def _write_active_offer(parsed, metrics, traffic_verdict, route_shadow, shortcut
         "ccz_bonus_applied": bool(metrics.get("ccz_bonus_applied")),
         "is_reserved": bool(parsed.get("is_reserved")),
         "route_shadow": route_shadow,
+        "route_line_shadow": route_line_shadow,
         "shortcut_source_tag": shortcut_source.get("tag") or "",
         "ocr_sha1": ocr_sha1 or "",
     }
@@ -1581,6 +1583,8 @@ DB_RED_FRESH_MIN_SAMPLES = 3
 DB_FINE_BUCKET_MINUTES = 15
 DB_FINE_BUCKET_NEIGHBOR_WEIGHT = 0.6
 DB_RED_MIN_DISTINCT_DAYS = 2
+ROUTE_LINE_EXACT_METERS = 120.0
+ROUTE_LINE_NEAR_METERS = 250.0
 
 
 def _load_traffic_beacon_db():
@@ -1607,6 +1611,38 @@ def _load_traffic_route_db():
     _ROUTE_DB_CACHE["mtime"] = mtime
     _ROUTE_DB_CACHE["payload"] = payload
     return payload
+
+
+def _load_traffic_beacon_points():
+    points = []
+    if not os.path.isdir(TRAFFIC_HISTORY_DIR):
+        return points
+    try:
+        names = sorted([name for name in os.listdir(TRAFFIC_HISTORY_DIR) if name.endswith(".jsonl")])
+    except Exception:
+        return points
+    for name in names:
+        path = os.path.join(TRAFFIC_HISTORY_DIR, name)
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                for raw_line in handle:
+                    raw_line = raw_line.strip()
+                    if not raw_line:
+                        continue
+                    try:
+                        entry = json.loads(raw_line)
+                    except Exception:
+                        continue
+                    if ("%s" % (entry.get("status") or "")).strip().lower() != "traffic":
+                        continue
+                    lat = _safe_float(entry.get("lat"), 0.0)
+                    lon = _safe_float(entry.get("lon"), 0.0)
+                    if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+                        continue
+                    points.append(entry)
+        except Exception:
+            continue
+    return points
 
 
 def _parse_outcode_family(outcode):
@@ -1842,6 +1878,66 @@ def _counter_direction_hits(counter, primary_direction):
     }
 
 
+def _local_xy_meters(lat, lon, origin_lat, origin_lon):
+    earth_radius = 6371000.0
+    lat_rad = math.radians(float(lat or 0.0))
+    origin_lat_rad = math.radians(float(origin_lat or 0.0))
+    dlat = lat_rad - origin_lat_rad
+    dlon = math.radians(float(lon or 0.0) - float(origin_lon or 0.0))
+    x = dlon * math.cos((lat_rad + origin_lat_rad) / 2.0) * earth_radius
+    y = dlat * earth_radius
+    return x, y
+
+
+def _distance_point_to_segment_meters(point_lat, point_lon, start_lat, start_lon, end_lat, end_lon):
+    origin_lat = float(start_lat or 0.0)
+    origin_lon = float(start_lon or 0.0)
+    ax, ay = 0.0, 0.0
+    bx, by = _local_xy_meters(end_lat, end_lon, origin_lat, origin_lon)
+    px, py = _local_xy_meters(point_lat, point_lon, origin_lat, origin_lon)
+    abx = bx - ax
+    aby = by - ay
+    ab_len_sq = abx * abx + aby * aby
+    if ab_len_sq <= 0.0001:
+        return math.hypot(px - ax, py - ay), 0.0
+    t = ((px - ax) * abx + (py - ay) * aby) / ab_len_sq
+    t_clamped = max(0.0, min(1.0, t))
+    cx = ax + t_clamped * abx
+    cy = ay + t_clamped * aby
+    return math.hypot(px - cx, py - cy), t_clamped
+
+
+def _resolve_beacon_centroid(parsed, prefix, beacon_db):
+    sector = ("%s" % ((parsed or {}).get("%s_sector" % prefix) or "")).strip().upper()
+    outcode = ("%s" % ((parsed or {}).get("%s_outcode" % prefix) or "")).strip().upper()
+    sector_bucket = ((beacon_db.get("sectors") or {}).get(sector) or {}) if sector else {}
+    outcode_bucket = ((beacon_db.get("outcodes") or {}).get(outcode) or {}) if outcode else {}
+    for scope, bucket, key in (
+        ("sector", sector_bucket, sector),
+        ("outcode", outcode_bucket, outcode),
+    ):
+        lat = _safe_float(bucket.get("centroid_lat"), 0.0)
+        lon = _safe_float(bucket.get("centroid_lon"), 0.0)
+        geo_samples = int(bucket.get("geo_samples") or 0)
+        if geo_samples > 0 and abs(lat) > 0.000001 and abs(lon) > 0.000001:
+            return {
+                "resolved": True,
+                "scope": scope,
+                "key": key,
+                "lat": lat,
+                "lon": lon,
+                "geo_samples": geo_samples,
+            }
+    return {
+        "resolved": False,
+        "scope": "",
+        "key": sector or outcode,
+        "lat": 0.0,
+        "lon": 0.0,
+        "geo_samples": 0,
+    }
+
+
 def _route_shadow_direction_summary(route_shadow):
     if not isinstance(route_shadow, dict):
         return {"mode": "", "direction": "", "hits": 0, "counter_direction": "", "counter_hits": 0, "summary": ""}
@@ -1881,6 +1977,131 @@ def _route_shadow_direction_summary(route_shadow):
         }
 
     return {"mode": "", "direction": "", "hits": 0, "counter_direction": "", "counter_hits": 0, "summary": ""}
+
+
+def _route_line_status_hint(exact_hits, near_hits, time_hits):
+    exact = int(exact_hits or 0)
+    near = int(near_hits or 0)
+    timed = int(time_hits or 0)
+    if exact >= 2 or (exact >= 1 and timed >= 1):
+        return "strong"
+    if exact + near >= 2:
+        return "watch"
+    if exact + near >= 1:
+        return "weak"
+    return "none"
+
+
+def _route_line_shadow_snapshot(parsed, now_dt=None):
+    now_dt = now_dt or datetime.datetime.now()
+    payload = {
+        "enabled": True,
+        "matched": False,
+        "source": "beacon_line_shadow",
+        "model": "centroid_segment_v1",
+        "time_bucket": _traffic_time_bucket(now_dt),
+        "pickup_endpoint": {},
+        "dropoff_endpoint": {},
+        "route_length_m": 0.0,
+        "exact_hits": 0,
+        "near_hits": 0,
+        "time_bucket_hits": 0,
+        "unique_outcodes": 0,
+        "unique_sectors": 0,
+        "top_outcodes": [],
+        "top_sectors": [],
+        "closest_hit_m": 0.0,
+        "status_hint": "none",
+    }
+    beacon_db = _load_traffic_beacon_db()
+    if not beacon_db:
+        return payload
+
+    pickup_endpoint = _resolve_beacon_centroid(parsed, "pickup", beacon_db)
+    dropoff_endpoint = _resolve_beacon_centroid(parsed, "dropoff", beacon_db)
+    payload["pickup_endpoint"] = pickup_endpoint
+    payload["dropoff_endpoint"] = dropoff_endpoint
+    if not pickup_endpoint.get("resolved") or not dropoff_endpoint.get("resolved"):
+        return payload
+
+    route_length_m, _ = _distance_point_to_segment_meters(
+        dropoff_endpoint["lat"],
+        dropoff_endpoint["lon"],
+        pickup_endpoint["lat"],
+        pickup_endpoint["lon"],
+        dropoff_endpoint["lat"],
+        dropoff_endpoint["lon"],
+    )
+    payload["route_length_m"] = round(route_length_m, 1)
+
+    beacon_points = _load_traffic_beacon_points()
+    if not beacon_points:
+        return payload
+
+    exact_hits = 0
+    near_hits = 0
+    time_hits = 0
+    closest_hit = None
+    outcode_counts = {}
+    sector_counts = {}
+    offer_bucket = payload["time_bucket"]
+
+    for entry in beacon_points:
+        lat = _safe_float(entry.get("lat"), 0.0)
+        lon = _safe_float(entry.get("lon"), 0.0)
+        if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+            continue
+        distance_m, progress = _distance_point_to_segment_meters(
+            lat,
+            lon,
+            pickup_endpoint["lat"],
+            pickup_endpoint["lon"],
+            dropoff_endpoint["lat"],
+            dropoff_endpoint["lon"],
+        )
+        if distance_m > ROUTE_LINE_NEAR_METERS:
+            continue
+        if distance_m <= ROUTE_LINE_EXACT_METERS:
+            exact_hits += 1
+        else:
+            near_hits += 1
+        beacon_bucket = _traffic_time_bucket(_parse_local_timestamp(entry.get("timestamp") or "") or now_dt)
+        if beacon_bucket == offer_bucket:
+            time_hits += 1
+        outcode = ("%s" % (entry.get("outcode") or "")).strip().upper()
+        sector = ("%s" % (entry.get("sector") or "")).strip().upper()
+        if outcode:
+            outcode_counts[outcode] = int(outcode_counts.get(outcode) or 0) + 1
+        if sector:
+            sector_counts[sector] = int(sector_counts.get(sector) or 0) + 1
+        hit = {
+            "distance_m": round(distance_m, 1),
+            "progress": round(progress, 3),
+            "outcode": outcode,
+            "sector": sector,
+            "timestamp": entry.get("timestamp") or "",
+        }
+        if closest_hit is None or hit["distance_m"] < closest_hit["distance_m"]:
+            closest_hit = hit
+
+    if exact_hits <= 0 and near_hits <= 0:
+        return payload
+
+    payload.update(
+        {
+            "matched": True,
+            "exact_hits": exact_hits,
+            "near_hits": near_hits,
+            "time_bucket_hits": time_hits,
+            "unique_outcodes": len(outcode_counts),
+            "unique_sectors": len(sector_counts),
+            "top_outcodes": [item[0] for item in sorted(outcode_counts.items(), key=lambda item: (-item[1], item[0]))[:3]],
+            "top_sectors": [item[0] for item in sorted(sector_counts.items(), key=lambda item: (-item[1], item[0]))[:3]],
+            "closest_hit_m": round(float((closest_hit or {}).get("distance_m") or 0.0), 1),
+            "status_hint": _route_line_status_hint(exact_hits, near_hits, time_hits),
+        }
+    )
+    return payload
 
 
 def _route_shadow_snapshot(parsed, now_dt=None):
@@ -2969,11 +3190,11 @@ def main():
     parsed["parse_error"] = parse_result.get("parseError")
     debug = parse_result.get("debug") or {}
     metrics = _derive_offer_metrics(parsed)
-    traffic_verdict = _traffic_zone_verdict(parsed)
-    route_shadow = _route_shadow_snapshot(parsed)
-    low_rating_decision = _low_rating_decision(parsed, debug)
-
     now = datetime.datetime.now()
+    traffic_verdict = _traffic_zone_verdict(parsed, now)
+    route_shadow = _route_shadow_snapshot(parsed, now)
+    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
+    low_rating_decision = _low_rating_decision(parsed, debug)
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -3008,6 +3229,7 @@ def main():
         "traffic_zone_reason": traffic_verdict["reason"],
         "traffic_zone_time_bucket": traffic_verdict["time_bucket"],
         "route_shadow": route_shadow,
+        "route_line_shadow": route_line_shadow,
         "vehicle_type": parsed["vehicle_type"],
         "surge_text": parsed["surge_text"],
         "is_reserved": parsed["is_reserved"],
@@ -3038,6 +3260,7 @@ def main():
         metrics,
         traffic_verdict,
         route_shadow,
+        route_line_shadow,
         shortcut_source,
         now_str,
         ocr_sha1,
@@ -3080,6 +3303,7 @@ def main():
         "target_progress_local": target_insight,
         "traffic_verdict": traffic_verdict,
         "route_shadow": route_shadow,
+        "route_line_shadow": route_line_shadow,
         "active_offer": active_offer_payload,
         "low_rating_decision": low_rating_decision,
     }
@@ -3129,6 +3353,16 @@ def main():
         route_direction_summary = ("%s" % (route_shadow.get("direction_summary") or "")).strip()
         if route_direction_summary:
             body_lines.append("Route Shadow %s" % route_direction_summary)
+        route_line_hits = int(route_line_shadow.get("exact_hits") or 0) + int(route_line_shadow.get("near_hits") or 0)
+        if route_line_hits > 0:
+            body_lines.append(
+                "Route Line x%d | exact %d | near %d"
+                % (
+                    route_line_hits,
+                    int(route_line_shadow.get("exact_hits") or 0),
+                    int(route_line_shadow.get("near_hits") or 0),
+                )
+            )
         body_text = "\n".join(body_lines)
     _send_push_notification(title_line, body_text)
 
