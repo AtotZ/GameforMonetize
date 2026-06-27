@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-27-updater-bootstrap-order-v28
+# version: 2026-06-27-updater-self-heal-v29
 import json
 import os
 import re
@@ -15,10 +15,12 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-27-updater-v28"
+SCRIPT_BUILD = "2026-06-27-updater-v29"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
+MANIFEST_RETRY_COUNT = 3
+MANIFEST_RETRY_SLEEP_SECONDS = 0.8
 RAW_MISMATCH_RETRY_COUNT = 4
 RAW_MISMATCH_RETRY_SLEEP_SECONDS = 1.0
 MAX_CONSOLE_LOG_LINES = 400
@@ -129,6 +131,8 @@ FILE_MAP = [
         "local_name": "traffic_beacon.py",
     },
 ]
+
+STRICT_MANIFEST_FILES = set(["update_from_github.py"])
 
 
 def _timestamp():
@@ -324,14 +328,20 @@ def _read_existing_json(path):
 
 def _download_manifest():
     url = "%s/%s" % (REPO_RAW_ROOT, MANIFEST_REMOTE_NAME)
-    try:
-        payload = json.loads(_download_text(url, cache_bust=True))
-    except Exception:
-        return {}
-    files = payload.get("files")
-    if not isinstance(files, dict):
-        return {}
-    return payload
+    for attempt in range(1, MANIFEST_RETRY_COUNT + 1):
+        try:
+            payload = json.loads(_download_text(url, cache_bust=True))
+            files = payload.get("files")
+            if isinstance(files, dict):
+                return payload
+        except Exception:
+            pass
+        if attempt < MANIFEST_RETRY_COUNT:
+            try:
+                time.sleep(MANIFEST_RETRY_SLEEP_SECONDS)
+            except Exception:
+                pass
+    return {}
 
 
 def _manifest_entry_for(item, manifest_payload):
@@ -496,7 +506,25 @@ def _update_one_file(item, manifest_payload):
     target_path = os.path.join(SCRIPT_DIR, item["local_name"])
     local_sha1 = _read_local_file_sha1(target_path)
     manifest_entry = _manifest_entry_for(item, manifest_payload)
-    source_text = _download_text_verified(url, item, manifest_entry)
+    try:
+        source_text = _download_text_verified(url, item, manifest_entry)
+    except RuntimeError as exc:
+        error_text = "%s" % exc
+        if item["local_name"] not in STRICT_MANIFEST_FILES and error_text.startswith("Manifest/raw mismatch"):
+            return {
+                "label": item["label"],
+                "remote_name": item["remote_name"],
+                "local_name": item["local_name"],
+                "target_path": target_path,
+                "download_url": url,
+                "bytes": 0,
+                "version_comment": "",
+                "script_build": "",
+                "content_sha1": "",
+                "status": "deferred_raw_mismatch",
+                "skip_reason": error_text,
+            }
+        raise
     version_info = _extract_version_from_text(source_text)
     if "404: Not Found" in source_text and len(source_text.strip()) <= 20:
         raise RuntimeError("GitHub returned 404 for %s" % item["remote_name"])
