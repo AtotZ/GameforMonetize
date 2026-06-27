@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-27-updater-soft-exit-v26
+# version: 2026-06-27-updater-raw-retry-v27
 import json
 import os
 import re
@@ -15,10 +15,12 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-27-updater-v26"
+SCRIPT_BUILD = "2026-06-27-updater-v27"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
+RAW_MISMATCH_RETRY_COUNT = 4
+RAW_MISMATCH_RETRY_SLEEP_SECONDS = 1.0
 MAX_CONSOLE_LOG_LINES = 400
 TRIMMED_CONSOLE_LOG_LINES = 250
 MAX_CONSOLE_LOG_BYTES = 48 * 1024
@@ -340,6 +342,42 @@ def _manifest_entry_for(item, manifest_payload):
     return entry if isinstance(entry, dict) else {}
 
 
+def _download_text_verified(url, item, manifest_entry):
+    local_name = item["local_name"]
+    expected_sha1 = ("%s" % (manifest_entry.get("content_sha1") or "")).strip().lower()
+    if not expected_sha1:
+        return _download_text(url, cache_bust=True)
+
+    last_text = ""
+    last_sha1 = ""
+    for attempt in range(1, RAW_MISMATCH_RETRY_COUNT + 1):
+        source_text = _download_text(url, cache_bust=True)
+        content_sha1 = _sha1_bytes(source_text.encode("utf-8")).lower()
+        if content_sha1 == expected_sha1:
+            return source_text
+        last_text = source_text
+        last_sha1 = content_sha1
+        if attempt < RAW_MISMATCH_RETRY_COUNT:
+            _log(
+                "[updater] raw mismatch retry %s/%s for %s | manifest=%s raw=%s"
+                % (
+                    attempt,
+                    RAW_MISMATCH_RETRY_COUNT,
+                    local_name,
+                    expected_sha1[:12],
+                    content_sha1[:12],
+                )
+            )
+            try:
+                time.sleep(RAW_MISMATCH_RETRY_SLEEP_SECONDS)
+            except Exception:
+                pass
+    raise RuntimeError(
+        "Manifest/raw mismatch for %s | manifest=%s raw=%s"
+        % (local_name, expected_sha1[:12], last_sha1[:12])
+    )
+
+
 def _bootstrap_private_sync_config():
     token = _extract_token_from_argv()
     if not token:
@@ -458,19 +496,13 @@ def _update_one_file(item, manifest_payload):
     target_path = os.path.join(SCRIPT_DIR, item["local_name"])
     local_sha1 = _read_local_file_sha1(target_path)
     manifest_entry = _manifest_entry_for(item, manifest_payload)
-    source_text = _download_text(url, cache_bust=True)
+    source_text = _download_text_verified(url, item, manifest_entry)
     version_info = _extract_version_from_text(source_text)
     if "404: Not Found" in source_text and len(source_text.strip()) <= 20:
         raise RuntimeError("GitHub returned 404 for %s" % item["remote_name"])
     if "import " not in source_text and "def " not in source_text:
         raise RuntimeError("Downloaded content for %s does not look like Python code." % item["remote_name"])
     content_sha1 = _sha1_bytes(source_text.encode("utf-8"))
-    manifest_sha1 = ("%s" % (manifest_entry.get("content_sha1") or "")).strip().lower()
-    if manifest_sha1 and content_sha1.lower() != manifest_sha1:
-        raise RuntimeError(
-            "Manifest/raw mismatch for %s | manifest=%s raw=%s"
-            % (item["local_name"], manifest_sha1[:12], content_sha1.lower()[:12])
-        )
     if os.path.exists(target_path) and local_sha1 == content_sha1:
         return {
             "label": item["label"],
