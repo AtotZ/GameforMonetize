@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v33"
+SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v34"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1275,8 +1275,6 @@ def _open_uber_driver_app():
 
 
 def _send_push_notification(title, body):
-    _open_uber_driver_app()
-
     UNUserNotificationCenter = ObjCClass("UNUserNotificationCenter")
     UNMutableNotificationContent = ObjCClass("UNMutableNotificationContent")
     UNNotificationRequest = ObjCClass("UNNotificationRequest")
@@ -1290,10 +1288,12 @@ def _send_push_notification(title, body):
     content.setSound_(UNNotificationSound.defaultSound())
 
     trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(0.5, False)
+    request_id = "TripLoggerLocalNotif-%s" % int(time.time() * 1000)
     request = UNNotificationRequest.requestWithIdentifier_content_trigger_(
-        "TripLoggerLocalNotif", content, trigger
+        request_id, content, trigger
     )
     center.addNotificationRequest_withCompletionHandler_(request, None)
+    _open_uber_driver_app()
 
 
 def _recent_assets(limit=RECENT_ASSET_SCAN_LIMIT):
