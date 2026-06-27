@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-route-beacon-line-shadow-v39
+# version: 2026-06-27-route-beacon-line-shadow-v40
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v39"
+SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v40"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1598,6 +1598,8 @@ DB_FINE_BUCKET_NEIGHBOR_WEIGHT = 0.6
 DB_RED_MIN_DISTINCT_DAYS = 2
 ROUTE_LINE_EXACT_METERS = 120.0
 ROUTE_LINE_NEAR_METERS = 250.0
+ROUTE_LINE_RED_SCORE_MIN = 5.0
+ROUTE_LINE_AMBER_SCORE_MIN = 2.5
 
 
 def _load_traffic_beacon_db():
@@ -2091,6 +2093,37 @@ def _route_line_status_hint(exact_hits, near_hits, time_hits):
     return "none"
 
 
+def _route_line_hit_weight(beacon_dt, now_dt, distance_m):
+    if beacon_dt is None:
+        time_weight = 0.45
+        bucket_match = False
+        adjacent_match = False
+    else:
+        delta_minutes = abs((now_dt - beacon_dt).total_seconds()) / 60.0
+        bucket_match = delta_minutes <= float(DB_FINE_BUCKET_MINUTES)
+        adjacent_match = delta_minutes <= float(DB_FINE_BUCKET_MINUTES * 2)
+        if bucket_match:
+            time_weight = 1.0
+        elif adjacent_match:
+            time_weight = 0.7
+        elif _traffic_time_bucket(beacon_dt) == _traffic_time_bucket(now_dt):
+            time_weight = 0.45
+        else:
+            time_weight = 0.2
+    distance_value = float(distance_m or 0.0)
+    if distance_value <= ROUTE_LINE_EXACT_METERS:
+        distance_weight = 3.0 if bucket_match else 2.0 if adjacent_match else 1.5
+    else:
+        distance_weight = 2.0 if bucket_match else 1.0 if adjacent_match else 0.6
+    return {
+        "score": round(distance_weight * time_weight, 2),
+        "bucket_match": bucket_match,
+        "adjacent_match": adjacent_match,
+        "time_weight": round(time_weight, 2),
+        "distance_weight": round(distance_weight, 2),
+    }
+
+
 def _route_line_shadow_snapshot(parsed, now_dt=None):
     now_dt = now_dt or datetime.datetime.now()
     payload = {
@@ -2111,6 +2144,14 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
         "top_sectors": [],
         "closest_hit_m": 0.0,
         "status_hint": "none",
+        "trap_score": 0.0,
+        "same_weekday_days": 0,
+        "same_weekpart_days": 0,
+        "weekday_relevance": "",
+        "weekday_multiplier": 0.0,
+        "matched_fine_buckets": [],
+        "adjacent_fine_buckets": [],
+        "strong_time_hits": 0,
     }
     beacon_db = _load_traffic_beacon_db()
     if not beacon_db:
@@ -2140,10 +2181,21 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
     exact_hits = 0
     near_hits = 0
     time_hits = 0
+    strong_time_hits = 0
     closest_hit = None
     outcode_counts = {}
     sector_counts = {}
     offer_bucket = payload["time_bucket"]
+    offer_fine_keys = _fine_bucket_neighbor_keys(now_dt)
+    offer_primary_fine_bucket = offer_fine_keys[0][0] if offer_fine_keys else ""
+    offer_neighbor_fine_buckets = {item[0] for item in offer_fine_keys[1:]}
+    matched_fine_buckets = set()
+    adjacent_fine_buckets = set()
+    trap_score = 0.0
+    best_same_weekday_days = 0
+    best_same_weekpart_days = 0
+    best_weekday_relevance = ""
+    best_weekday_multiplier = 0.0
 
     for entry in beacon_points:
         lat = _safe_float(entry.get("lat"), 0.0)
@@ -2164,9 +2216,33 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
             exact_hits += 1
         else:
             near_hits += 1
-        beacon_bucket = _traffic_time_bucket(_parse_local_timestamp(entry.get("timestamp") or "") or now_dt)
+        beacon_dt = _parse_local_timestamp(entry.get("timestamp") or "")
+        beacon_bucket = _traffic_time_bucket(beacon_dt or now_dt)
         if beacon_bucket == offer_bucket:
             time_hits += 1
+        if beacon_dt is not None:
+            beacon_fine_bucket = _fine_bucket_key(beacon_dt)
+            if beacon_fine_bucket == offer_primary_fine_bucket:
+                matched_fine_buckets.add(beacon_fine_bucket)
+            elif beacon_fine_bucket in offer_neighbor_fine_buckets:
+                adjacent_fine_buckets.add(beacon_fine_bucket)
+            relevance = _leaf_weekday_relevance({"days_seen": {beacon_dt.strftime("%Y-%m-%d"): 1}}, now_dt)
+            same_weekday_days = int(relevance.get("same_weekday_days") or 0)
+            same_weekpart_days = int(relevance.get("same_weekpart_days") or 0)
+            weekday_multiplier = float(relevance.get("multiplier") or 0.0)
+            if same_weekday_days > best_same_weekday_days:
+                best_same_weekday_days = same_weekday_days
+            if same_weekpart_days > best_same_weekpart_days:
+                best_same_weekpart_days = same_weekpart_days
+            if weekday_multiplier > best_weekday_multiplier:
+                best_weekday_multiplier = weekday_multiplier
+                best_weekday_relevance = relevance.get("label") or ""
+        else:
+            weekday_multiplier = 0.45
+        hit_weight = _route_line_hit_weight(beacon_dt, now_dt, distance_m)
+        if hit_weight["bucket_match"]:
+            strong_time_hits += 1
+        trap_score += float(hit_weight["score"]) * float(weekday_multiplier)
         outcode = ("%s" % (entry.get("outcode") or "")).strip().upper()
         sector = ("%s" % (entry.get("sector") or "")).strip().upper()
         if outcode:
@@ -2192,12 +2268,20 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
             "exact_hits": exact_hits,
             "near_hits": near_hits,
             "time_bucket_hits": time_hits,
+            "strong_time_hits": strong_time_hits,
             "unique_outcodes": len(outcode_counts),
             "unique_sectors": len(sector_counts),
             "top_outcodes": [item[0] for item in sorted(outcode_counts.items(), key=lambda item: (-item[1], item[0]))[:3]],
             "top_sectors": [item[0] for item in sorted(sector_counts.items(), key=lambda item: (-item[1], item[0]))[:3]],
             "closest_hit_m": round(float((closest_hit or {}).get("distance_m") or 0.0), 1),
             "status_hint": _route_line_status_hint(exact_hits, near_hits, time_hits),
+            "trap_score": round(trap_score, 2),
+            "same_weekday_days": best_same_weekday_days,
+            "same_weekpart_days": best_same_weekpart_days,
+            "weekday_relevance": best_weekday_relevance,
+            "weekday_multiplier": round(best_weekday_multiplier, 2),
+            "matched_fine_buckets": sorted(matched_fine_buckets),
+            "adjacent_fine_buckets": sorted(adjacent_fine_buckets),
         }
     )
     return payload
@@ -2541,6 +2625,60 @@ def _traffic_verdict_payload(status, label, scope, reason, time_bucket):
     }
 
 
+def _route_line_override_verdict(parsed, route_line_shadow, now_dt=None):
+    now_dt = now_dt or datetime.datetime.now()
+    shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
+    if not shadow or not shadow.get("matched"):
+        return None
+
+    trap_score = float(shadow.get("trap_score") or 0.0)
+    exact_hits = int(shadow.get("exact_hits") or 0)
+    near_hits = int(shadow.get("near_hits") or 0)
+    strong_time_hits = int(shadow.get("strong_time_hits") or 0)
+    top_outcodes = shadow.get("top_outcodes") or []
+    top_sectors = shadow.get("top_sectors") or []
+    label = ""
+    if top_outcodes:
+        label = "%s route" % top_outcodes[0]
+    elif top_sectors:
+        label = "%s route" % top_sectors[0]
+    else:
+        label = "Route trap"
+
+    reason = "route_line score=%.2f exact=%s near=%s time=%s" % (
+        trap_score,
+        exact_hits,
+        near_hits,
+        strong_time_hits,
+    )
+    time_bucket = _traffic_time_bucket(now_dt)
+
+    if trap_score >= ROUTE_LINE_RED_SCORE_MIN or (exact_hits >= 2 and strong_time_hits >= 1):
+        verdict = _traffic_verdict_payload("RED", label, "route", reason, time_bucket)
+        verdict["source"] = "route_line_shadow"
+        verdict["route_line_shadow"] = shadow
+        return verdict
+
+    if trap_score >= ROUTE_LINE_AMBER_SCORE_MIN or exact_hits >= 1 or (exact_hits + near_hits) >= 3:
+        verdict = _traffic_verdict_payload("AMBER", label, "route", reason, time_bucket)
+        verdict["source"] = "route_line_shadow"
+        verdict["route_line_shadow"] = shadow
+        return verdict
+
+    return None
+
+
+def _merge_route_line_verdict(base_verdict, route_verdict):
+    if not route_verdict:
+        return base_verdict
+    if not base_verdict:
+        return route_verdict
+    rank = {"GREEN": 1, "NEUTRAL": 2, "AMBER": 3, "RED": 4}
+    base_rank = rank.get(("%s" % (base_verdict.get("status") or "")).upper(), 0)
+    route_rank = rank.get(("%s" % (route_verdict.get("status") or "")).upper(), 0)
+    return route_verdict if route_rank > base_rank else base_verdict
+
+
 def _compact_traffic_title_label(parsed, traffic_verdict):
     label = ("%s" % ((traffic_verdict or {}).get("label") or "")).strip()
     scope = ("%s" % ((traffic_verdict or {}).get("scope") or "")).strip().lower()
@@ -2671,7 +2809,7 @@ def _traffic_scope_verdict(scope, address_text, outcode, time_bucket, postcode_q
     return None
 
 
-def _traffic_zone_verdict(parsed, now_dt=None):
+def _traffic_zone_verdict(parsed, now_dt=None, route_line_shadow=None):
     now_dt = now_dt or datetime.datetime.now()
     time_bucket = _traffic_time_bucket(now_dt)
     dropoff_address = ("%s" % (parsed.get("dropoff_address") or "")).strip()
@@ -2679,9 +2817,10 @@ def _traffic_zone_verdict(parsed, now_dt=None):
     dropoff_quality = _postcode_quality(parsed, "dropoff")
     pickup_address = ("%s" % (parsed.get("pickup_address") or "")).strip()
     pickup_quality = _postcode_quality(parsed, "pickup")
+    route_verdict = _route_line_override_verdict(parsed, route_line_shadow, now_dt)
     db_verdict = _traffic_db_verdict(parsed, now_dt)
     if db_verdict:
-        return db_verdict
+        return _merge_route_line_verdict(db_verdict, route_verdict)
     dropoff_verdict = _traffic_scope_verdict(
         "dropoff",
         dropoff_address,
@@ -2690,11 +2829,11 @@ def _traffic_zone_verdict(parsed, now_dt=None):
         dropoff_quality,
     )
     if dropoff_verdict:
-        return dropoff_verdict
+        return _merge_route_line_verdict(dropoff_verdict, route_verdict)
     if dropoff_address and not dropoff_outcode and dropoff_address != pickup_address:
         verdict = _traffic_verdict_payload("NEUTRAL", "Dropoff ?", "dropoff", "dropoff_text_without_postcode", time_bucket)
         verdict["source"] = "hardcoded"
-        return verdict
+        return _merge_route_line_verdict(verdict, route_verdict)
 
     pickup_verdict = _traffic_scope_verdict(
         "pickup",
@@ -2704,11 +2843,11 @@ def _traffic_zone_verdict(parsed, now_dt=None):
         pickup_quality,
     )
     if pickup_verdict:
-        return pickup_verdict
+        return _merge_route_line_verdict(pickup_verdict, route_verdict)
 
     verdict = _traffic_verdict_payload("NEUTRAL", "Neutral", "", "no_strong_match", time_bucket)
     verdict["source"] = "hardcoded"
-    return verdict
+    return _merge_route_line_verdict(verdict, route_verdict)
 
 
 def _derive_offer_metrics(parsed):
@@ -3364,6 +3503,7 @@ def main():
     _send_push_notification(title_line, body_text)
 
     route_line_shadow = _route_line_shadow_snapshot(parsed, now)
+    traffic_verdict = _traffic_zone_verdict(parsed, now, route_line_shadow)
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
