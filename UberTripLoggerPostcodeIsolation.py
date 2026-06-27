@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v32"
+SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v33"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1724,6 +1724,90 @@ def _leaf_day_keys(leaf):
     return []
 
 
+def _day_key_weekday(day_key):
+    text = ("%s" % (day_key or "")).strip()
+    if len(text) < 10:
+        return None
+    try:
+        return datetime.datetime.strptime(text[:10], "%Y-%m-%d").weekday()
+    except Exception:
+        return None
+
+
+def _leaf_weekday_relevance(leaf, now_dt):
+    day_keys = _leaf_day_keys(leaf)
+    if not day_keys:
+        return {
+            "same_weekday_days": 0,
+            "same_weekpart_days": 0,
+            "multiplier": 0.75,
+            "label": "unknown_days",
+        }
+    target_weekday = int(now_dt.weekday())
+    target_is_weekday = target_weekday < 5
+    same_weekday_days = 0
+    same_weekpart_days = 0
+    for day_key in day_keys:
+        weekday_value = _day_key_weekday(day_key)
+        if weekday_value is None:
+            continue
+        if weekday_value == target_weekday:
+            same_weekday_days += 1
+        if (weekday_value < 5) == target_is_weekday:
+            same_weekpart_days += 1
+    if same_weekday_days >= 2:
+        return {
+            "same_weekday_days": same_weekday_days,
+            "same_weekpart_days": same_weekpart_days,
+            "multiplier": 1.0,
+            "label": "same_weekday_strong",
+        }
+    if same_weekday_days == 1:
+        return {
+            "same_weekday_days": same_weekday_days,
+            "same_weekpart_days": same_weekpart_days,
+            "multiplier": 0.92,
+            "label": "same_weekday_thin",
+        }
+    if same_weekpart_days >= 3:
+        return {
+            "same_weekday_days": same_weekday_days,
+            "same_weekpart_days": same_weekpart_days,
+            "multiplier": 0.78,
+            "label": "same_weekpart_only",
+        }
+    if same_weekpart_days >= 1:
+        return {
+            "same_weekday_days": same_weekday_days,
+            "same_weekpart_days": same_weekpart_days,
+            "multiplier": 0.65,
+            "label": "same_weekpart_sparse",
+        }
+    return {
+        "same_weekday_days": same_weekday_days,
+        "same_weekpart_days": same_weekpart_days,
+        "multiplier": 0.45,
+        "label": "cross_period_only",
+    }
+
+
+def _leaf_weighted_time_metrics(leaf, now_dt):
+    relevance = _leaf_weekday_relevance(leaf, now_dt)
+    multiplier = float(relevance.get("multiplier") or 0.0)
+    return {
+        "score": round(float(leaf.get("net_score") or 0.0) * multiplier, 2),
+        "samples": round(float(leaf.get("samples") or 0.0) * multiplier, 2),
+        "confidence": leaf.get("confidence") or "low",
+        "last_seen": leaf.get("last_seen") or "",
+        "distinct_days": len(_leaf_day_keys(leaf)),
+        "day_keys": _leaf_day_keys(leaf),
+        "same_weekday_days": int(relevance.get("same_weekday_days") or 0),
+        "same_weekpart_days": int(relevance.get("same_weekpart_days") or 0),
+        "weekday_relevance": relevance.get("label") or "",
+        "weekday_multiplier": multiplier,
+    }
+
+
 def _parse_local_timestamp(value):
     text = ("%s" % (value or "")).strip()
     if not text:
@@ -1774,6 +1858,10 @@ def _weighted_fine_bucket_metrics(bucket, now_dt):
     latest_dt = None
     matched = []
     day_keys = set()
+    same_weekday_days = 0
+    same_weekpart_days = 0
+    best_weekday_label = ""
+    best_weekday_multiplier = 0.0
 
     for bucket_key, weight in _fine_bucket_neighbor_keys(now_dt):
         leaf = _bucket_fine_time_leaf(bucket, bucket_key)
@@ -1782,8 +1870,16 @@ def _weighted_fine_bucket_metrics(bucket, now_dt):
         matched.append(bucket_key)
         for day_key in _leaf_day_keys(leaf):
             day_keys.add(day_key)
-        weighted_score += float(leaf.get("net_score") or 0.0) * weight
-        weighted_samples += float(leaf.get("samples") or 0.0) * weight
+        relevance = _leaf_weekday_relevance(leaf, now_dt)
+        weekday_multiplier = float(relevance.get("multiplier") or 0.0)
+        effective_weight = float(weight) * weekday_multiplier
+        weighted_score += float(leaf.get("net_score") or 0.0) * effective_weight
+        weighted_samples += float(leaf.get("samples") or 0.0) * effective_weight
+        same_weekday_days += int(relevance.get("same_weekday_days") or 0)
+        same_weekpart_days += int(relevance.get("same_weekpart_days") or 0)
+        if weekday_multiplier > best_weekday_multiplier:
+            best_weekday_multiplier = weekday_multiplier
+            best_weekday_label = relevance.get("label") or ""
         rank = _leaf_rank(leaf)
         if rank > best_rank:
             best_rank = rank
@@ -1802,6 +1898,10 @@ def _weighted_fine_bucket_metrics(bucket, now_dt):
         "matched_buckets": matched,
         "distinct_days": len(day_keys),
         "day_keys": sorted(day_keys),
+        "same_weekday_days": same_weekday_days,
+        "same_weekpart_days": same_weekpart_days,
+        "weekday_relevance": best_weekday_label,
+        "weekday_multiplier": round(best_weekday_multiplier, 2),
     }
 
 
@@ -2146,14 +2246,19 @@ def _route_shadow_snapshot(parsed, now_dt=None):
     weighted = _weighted_fine_bucket_metrics(route_bucket, now_dt)
     if not weighted.get("matched_buckets"):
         coarse_leaf = _bucket_time_leaf(route_bucket, payload["time_bucket"])
+        coarse_metrics = _leaf_weighted_time_metrics(coarse_leaf, now_dt) if coarse_leaf else {}
         weighted = {
-            "score": float(coarse_leaf.get("net_score") or 0.0),
-            "samples": float(coarse_leaf.get("samples") or 0.0),
-            "confidence": coarse_leaf.get("confidence") or "low",
-            "last_seen": coarse_leaf.get("last_seen") or "",
+            "score": float(coarse_metrics.get("score") or 0.0),
+            "samples": float(coarse_metrics.get("samples") or 0.0),
+            "confidence": coarse_metrics.get("confidence") or "low",
+            "last_seen": coarse_metrics.get("last_seen") or "",
             "matched_buckets": [payload["time_bucket"]] if coarse_leaf else [],
-            "distinct_days": len(_leaf_day_keys(coarse_leaf)),
-            "day_keys": _leaf_day_keys(coarse_leaf),
+            "distinct_days": int(coarse_metrics.get("distinct_days") or 0),
+            "day_keys": coarse_metrics.get("day_keys") or [],
+            "same_weekday_days": int(coarse_metrics.get("same_weekday_days") or 0),
+            "same_weekpart_days": int(coarse_metrics.get("same_weekpart_days") or 0),
+            "weekday_relevance": coarse_metrics.get("weekday_relevance") or "",
+            "weekday_multiplier": float(coarse_metrics.get("weekday_multiplier") or 0.0),
         }
 
     samples = int(route_bucket.get("samples") or 0)
@@ -2188,6 +2293,10 @@ def _route_shadow_snapshot(parsed, now_dt=None):
             "time_bucket_last_seen": weighted.get("last_seen") or "",
             "time_bucket_distinct_days": int(weighted.get("distinct_days") or 0),
             "time_bucket_day_keys": weighted.get("day_keys") or [],
+            "time_bucket_same_weekday_days": int(weighted.get("same_weekday_days") or 0),
+            "time_bucket_same_weekpart_days": int(weighted.get("same_weekpart_days") or 0),
+            "time_bucket_weekday_relevance": weighted.get("weekday_relevance") or "",
+            "time_bucket_weekday_multiplier": round(float(weighted.get("weekday_multiplier") or 0.0), 2),
             "status_hint": _route_shadow_status_hint(net_score, samples, time_score, time_samples),
         }
     )
@@ -2223,23 +2332,33 @@ def _traffic_db_verdict(parsed, now_dt=None):
     if not outcode_time["matched_buckets"] and not sector_time["matched_buckets"]:
         outcode_time_leaf = _bucket_time_leaf(counts["exact_outcode_bucket"], current_time_bucket)
         sector_time_leaf = _bucket_time_leaf(counts["exact_sector_bucket"], current_time_bucket)
+        outcode_leaf_metrics = _leaf_weighted_time_metrics(outcode_time_leaf, now_dt) if outcode_time_leaf else {}
+        sector_leaf_metrics = _leaf_weighted_time_metrics(sector_time_leaf, now_dt) if sector_time_leaf else {}
         outcode_time = {
-            "score": float(outcode_time_leaf.get("net_score") or 0.0),
-            "samples": float(outcode_time_leaf.get("samples") or 0.0),
-            "confidence": outcode_time_leaf.get("confidence") or "low",
-            "last_seen": outcode_time_leaf.get("last_seen") or "",
+            "score": float(outcode_leaf_metrics.get("score") or 0.0),
+            "samples": float(outcode_leaf_metrics.get("samples") or 0.0),
+            "confidence": outcode_leaf_metrics.get("confidence") or "low",
+            "last_seen": outcode_leaf_metrics.get("last_seen") or "",
             "matched_buckets": [current_time_bucket] if outcode_time_leaf else [],
-            "distinct_days": len(_leaf_day_keys(outcode_time_leaf)),
-            "day_keys": _leaf_day_keys(outcode_time_leaf),
+            "distinct_days": int(outcode_leaf_metrics.get("distinct_days") or 0),
+            "day_keys": outcode_leaf_metrics.get("day_keys") or [],
+            "same_weekday_days": int(outcode_leaf_metrics.get("same_weekday_days") or 0),
+            "same_weekpart_days": int(outcode_leaf_metrics.get("same_weekpart_days") or 0),
+            "weekday_relevance": outcode_leaf_metrics.get("weekday_relevance") or "",
+            "weekday_multiplier": float(outcode_leaf_metrics.get("weekday_multiplier") or 0.0),
         }
         sector_time = {
-            "score": float(sector_time_leaf.get("net_score") or 0.0),
-            "samples": float(sector_time_leaf.get("samples") or 0.0),
-            "confidence": sector_time_leaf.get("confidence") or "low",
-            "last_seen": sector_time_leaf.get("last_seen") or "",
+            "score": float(sector_leaf_metrics.get("score") or 0.0),
+            "samples": float(sector_leaf_metrics.get("samples") or 0.0),
+            "confidence": sector_leaf_metrics.get("confidence") or "low",
+            "last_seen": sector_leaf_metrics.get("last_seen") or "",
             "matched_buckets": [current_time_bucket] if sector_time_leaf else [],
-            "distinct_days": len(_leaf_day_keys(sector_time_leaf)),
-            "day_keys": _leaf_day_keys(sector_time_leaf),
+            "distinct_days": int(sector_leaf_metrics.get("distinct_days") or 0),
+            "day_keys": sector_leaf_metrics.get("day_keys") or [],
+            "same_weekday_days": int(sector_leaf_metrics.get("same_weekday_days") or 0),
+            "same_weekpart_days": int(sector_leaf_metrics.get("same_weekpart_days") or 0),
+            "weekday_relevance": sector_leaf_metrics.get("weekday_relevance") or "",
+            "weekday_multiplier": float(sector_leaf_metrics.get("weekday_multiplier") or 0.0),
         }
 
     outcode_time_score = float(outcode_time["score"])
@@ -2258,6 +2377,10 @@ def _traffic_db_verdict(parsed, now_dt=None):
     best_positive_match = sector_time["matched_buckets"]
     best_positive_days = int(sector_time.get("distinct_days") or 0)
     best_positive_day_keys = sector_time.get("day_keys") or []
+    best_positive_same_weekday_days = int(sector_time.get("same_weekday_days") or 0)
+    best_positive_same_weekpart_days = int(sector_time.get("same_weekpart_days") or 0)
+    best_positive_weekday_relevance = sector_time.get("weekday_relevance") or ""
+    best_positive_weekday_multiplier = float(sector_time.get("weekday_multiplier") or 0.0)
     if outcode_time_score >= sector_time_score:
         best_positive_samples = outcode_time_samples
         best_positive_confidence = outcode_time_confidence
@@ -2265,6 +2388,10 @@ def _traffic_db_verdict(parsed, now_dt=None):
         best_positive_match = outcode_time["matched_buckets"]
         best_positive_days = int(outcode_time.get("distinct_days") or 0)
         best_positive_day_keys = outcode_time.get("day_keys") or []
+        best_positive_same_weekday_days = int(outcode_time.get("same_weekday_days") or 0)
+        best_positive_same_weekpart_days = int(outcode_time.get("same_weekpart_days") or 0)
+        best_positive_weekday_relevance = outcode_time.get("weekday_relevance") or ""
+        best_positive_weekday_multiplier = float(outcode_time.get("weekday_multiplier") or 0.0)
 
     red_signal_ok, red_gate_reason, red_age_days = _positive_time_bucket_gate(
         best_positive_score,
@@ -2312,6 +2439,10 @@ def _traffic_db_verdict(parsed, now_dt=None):
         verdict["time_bucket_matches"] = best_positive_match
         verdict["time_bucket_distinct_days"] = best_positive_days
         verdict["time_bucket_day_keys"] = best_positive_day_keys
+        verdict["time_bucket_same_weekday_days"] = best_positive_same_weekday_days
+        verdict["time_bucket_same_weekpart_days"] = best_positive_same_weekpart_days
+        verdict["time_bucket_weekday_relevance"] = best_positive_weekday_relevance
+        verdict["time_bucket_weekday_multiplier"] = round(best_positive_weekday_multiplier, 2)
         return verdict
 
     if exact_total >= TRAP_EXACT_AMBER_MIN or nearby_total >= TRAP_NEARBY_AMBER_MIN or best_positive_score > 0:
@@ -2341,6 +2472,10 @@ def _traffic_db_verdict(parsed, now_dt=None):
         verdict["time_bucket_matches"] = best_positive_match
         verdict["time_bucket_distinct_days"] = best_positive_days
         verdict["time_bucket_day_keys"] = best_positive_day_keys
+        verdict["time_bucket_same_weekday_days"] = best_positive_same_weekday_days
+        verdict["time_bucket_same_weekpart_days"] = best_positive_same_weekpart_days
+        verdict["time_bucket_weekday_relevance"] = best_positive_weekday_relevance
+        verdict["time_bucket_weekday_multiplier"] = round(best_positive_weekday_multiplier, 2)
         return verdict
 
     return None

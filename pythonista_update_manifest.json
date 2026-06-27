@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-06-27 00:00:00",
-  "manifest_build": "2026-06-27-manifest-v20",
+  "updated_at": "2026-06-27 00:10:00",
+  "manifest_build": "2026-06-27-manifest-v21",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
       "version_comment": "2026-06-27-route-beacon-line-shadow-v31",
-      "script_build": "2026-06-27-route-beacon-line-shadow-v32",
-      "bytes": 141908,
-      "content_sha1": "7c28379936500c0951ffc50bef80616f67a21f23"
+      "script_build": "2026-06-27-route-beacon-line-shadow-v33",
+      "bytes": 148911,
+      "content_sha1": "b8a1ab71d2fdaba18fd5bc7627042324fb519d98"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
