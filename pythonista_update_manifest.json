@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-06-27 09:34:48",
-  "manifest_build": "2026-06-27-manifest-v35",
+  "updated_at": "2026-06-27 09:41:00",
+  "manifest_build": "2026-06-27-manifest-v36-bootstrap",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
       "version_comment": "2026-06-27-route-score-reverted-notify-v43",
       "script_build": "2026-06-27-route-score-reverted-notify-v43",
       "bytes": 157938,
-      "content_sha1": "8ff2248c1ea1ad7d430345b25710e965ae141f60"
+      "content_sha1": ""
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
@@ -18,10 +18,10 @@
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-27-updater-raw-retry-v27",
-      "script_build": "2026-06-27-updater-v27",
-      "bytes": 26559,
-      "content_sha1": "207ad2d1eb9bc6ce7fca0ee8fbedfe87d2fdea0f"
+      "version_comment": "2026-06-27-updater-bootstrap-order-v28",
+      "script_build": "2026-06-27-updater-v28",
+      "bytes": 26565,
+      "content_sha1": ""
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",

@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-27-updater-raw-retry-v27
+# version: 2026-06-27-updater-bootstrap-order-v28
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-27-updater-v27"
+SCRIPT_BUILD = "2026-06-27-updater-v28"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -109,16 +109,6 @@ CONSOLE_LOG_PATH = os.path.join(SCRIPT_DIR, "pythonista_console.log")
 
 FILE_MAP = [
     {
-        "label": "UberTripLogger",
-        "remote_name": "UberTripLoggerPostcodeIsolation.py",
-        "local_name": "UberTripLogger.py",
-    },
-    {
-        "label": "traffic_beacon",
-        "remote_name": "traffic_beacon.py",
-        "local_name": "traffic_beacon.py",
-    },
-    {
         "label": "update_from_github",
         "remote_name": "update_from_github.py",
         "local_name": "update_from_github.py",
@@ -127,6 +117,16 @@ FILE_MAP = [
         "label": "upload_data_to_private_github",
         "remote_name": "upload_data_to_private_github.py",
         "local_name": "upload_data_to_private_github.py",
+    },
+    {
+        "label": "UberTripLogger",
+        "remote_name": "UberTripLoggerPostcodeIsolation.py",
+        "local_name": "UberTripLogger.py",
+    },
+    {
+        "label": "traffic_beacon",
+        "remote_name": "traffic_beacon.py",
+        "local_name": "traffic_beacon.py",
     },
 ]
 
