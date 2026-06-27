@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v34"
+SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v35"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1275,25 +1275,33 @@ def _open_uber_driver_app():
 
 
 def _send_push_notification(title, body):
-    UNUserNotificationCenter = ObjCClass("UNUserNotificationCenter")
-    UNMutableNotificationContent = ObjCClass("UNMutableNotificationContent")
-    UNNotificationRequest = ObjCClass("UNNotificationRequest")
-    UNTimeIntervalNotificationTrigger = ObjCClass("UNTimeIntervalNotificationTrigger")
-    UNNotificationSound = ObjCClass("UNNotificationSound")
+    if ObjCClass is None:
+        return False
+    try:
+        UNUserNotificationCenter = ObjCClass("UNUserNotificationCenter")
+        UNMutableNotificationContent = ObjCClass("UNMutableNotificationContent")
+        UNNotificationRequest = ObjCClass("UNNotificationRequest")
+        UNTimeIntervalNotificationTrigger = ObjCClass("UNTimeIntervalNotificationTrigger")
+        UNNotificationSound = ObjCClass("UNNotificationSound")
 
-    center = UNUserNotificationCenter.currentNotificationCenter()
-    content = UNMutableNotificationContent.alloc().init()
-    content.setTitle_(title)
-    content.setBody_(body)
-    content.setSound_(UNNotificationSound.defaultSound())
+        center = UNUserNotificationCenter.currentNotificationCenter()
+        content = UNMutableNotificationContent.alloc().init()
+        content.setTitle_("%s" % (title or "TripLogger"))
+        content.setBody_("%s" % (body or ""))
+        content.setSound_(UNNotificationSound.defaultSound())
 
-    trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(0.5, False)
-    request_id = "TripLoggerLocalNotif-%s" % int(time.time() * 1000)
-    request = UNNotificationRequest.requestWithIdentifier_content_trigger_(
-        request_id, content, trigger
-    )
-    center.addNotificationRequest_withCompletionHandler_(request, None)
-    _open_uber_driver_app()
+        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(1.0, False)
+        request_id = "TripLoggerLocalNotif-%s" % int(time.time() * 1000)
+        request = UNNotificationRequest.requestWithIdentifier_content_trigger_(
+            request_id, content, trigger
+        )
+        center.addNotificationRequest_withCompletionHandler_(request, None)
+        time.sleep(0.12)
+        _open_uber_driver_app()
+        return True
+    except Exception as exc:
+        _runtime_print("[notif] failed: %s" % exc)
+        return False
 
 
 def _recent_assets(limit=RECENT_ASSET_SCAN_LIMIT):
@@ -3449,6 +3457,7 @@ def main():
         state_payload["last_created"] = _created_str(getattr(latest_asset, "creation_date", None))
     _save_state(state_payload)
 
+    notification_queued = False
     if low_rating_decision["should_decline_low_rating"]:
         title_line = "\u2b50 %.2f | Decline below %.2f" % (
             low_rating_decision["rating"],
@@ -3491,7 +3500,13 @@ def main():
                 )
             )
         body_text = "\n".join(body_lines)
-    _send_push_notification(title_line, body_text)
+    notification_queued = _send_push_notification(title_line, body_text)
+    latest_payload["notification"] = {
+        "queued": bool(notification_queued),
+        "title": title_line,
+        "body": body_text,
+    }
+    _write_json(LATEST_JSON_PATH, latest_payload)
 
     t_global_end = time.perf_counter()
     _runtime_print("[T1] Leaving Pythonista at %s (Exec time: %.3fs)" % (
