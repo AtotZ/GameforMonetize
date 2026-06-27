@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-27-updater-route-points-v23
+# version: 2026-06-27-updater-cache-bust-v24
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-27-updater-v23"
+SCRIPT_BUILD = "2026-06-27-updater-v24"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -223,12 +223,17 @@ def _send_local_notification(title, body):
         return False
 
 
-def _download_text(url):
+def _download_text(url, cache_bust=False):
+    request_url = "%s" % (url or "")
+    if cache_bust:
+        separator = "&" if "?" in request_url else "?"
+        request_url = "%s%scodex_ts=%d" % (request_url, separator, int(time.time() * 1000))
     request = urllib.request.Request(
-        url,
+        request_url,
         headers={
             "User-Agent": "PythonistaUpdater/1.0",
             "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
         },
     )
     with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
@@ -307,7 +312,7 @@ def _read_existing_json(path):
 def _download_manifest():
     url = "%s/%s" % (REPO_RAW_ROOT, MANIFEST_REMOTE_NAME)
     try:
-        payload = json.loads(_download_text(url))
+        payload = json.loads(_download_text(url, cache_bust=True))
     except Exception:
         return {}
     files = payload.get("files")
@@ -442,13 +447,19 @@ def _update_one_file(item, manifest_payload):
     target_path = os.path.join(SCRIPT_DIR, item["local_name"])
     local_sha1 = _read_local_file_sha1(target_path)
     manifest_entry = _manifest_entry_for(item, manifest_payload)
-    source_text = _download_text(url)
+    source_text = _download_text(url, cache_bust=True)
     version_info = _extract_version_from_text(source_text)
     if "404: Not Found" in source_text and len(source_text.strip()) <= 20:
         raise RuntimeError("GitHub returned 404 for %s" % item["remote_name"])
     if "import " not in source_text and "def " not in source_text:
         raise RuntimeError("Downloaded content for %s does not look like Python code." % item["remote_name"])
     content_sha1 = _sha1_bytes(source_text.encode("utf-8"))
+    manifest_sha1 = ("%s" % (manifest_entry.get("content_sha1") or "")).strip().lower()
+    if manifest_sha1 and content_sha1.lower() != manifest_sha1:
+        raise RuntimeError(
+            "Manifest/raw mismatch for %s | manifest=%s raw=%s"
+            % (item["local_name"], manifest_sha1[:12], content_sha1.lower()[:12])
+        )
     if os.path.exists(target_path) and local_sha1 == content_sha1:
         return {
             "label": item["label"],
