@@ -1,4 +1,4 @@
-# version: 2026-06-27-traffic-beacon-centroid-route-v15
+# version: 2026-06-27-traffic-beacon-centroid-route-v16
 import datetime
 import glob
 import json
@@ -28,6 +28,7 @@ LATEST_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-latest.json")
 DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
 ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
 ROUTE_DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
+ROUTE_POINT_DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-route-points.json")
 MAX_HISTORY_ITEMS = 2000
 ACTIVE_OFFER_MAX_AGE_SECONDS = 6 * 60 * 60
 CONFIDENCE_MEDIUM_MIN_SAMPLES = 3
@@ -36,6 +37,7 @@ TRAFFIC_FINE_BUCKET_MINUTES = 15
 CORRIDOR_CELL_SIZE_METERS = 200.0
 DIRECTION_BINS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 GEO_SCHEMA_VERSION = 1
+ROUTE_POINT_SCHEMA_VERSION = 1
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
@@ -175,6 +177,75 @@ def _append_history(entry):
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
     return path
+
+
+def _route_point_record(entry):
+    status = ("%s" % ((entry or {}).get("status") or "")).strip().lower()
+    lat = round(_safe_float((entry or {}).get("lat"), 0.0), 6)
+    lon = round(_safe_float((entry or {}).get("lon"), 0.0), 6)
+    if status != "traffic":
+        return {}
+    if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+        return {}
+    timestamp = ("%s" % ((entry or {}).get("timestamp") or "")).strip()
+    return {
+        "timestamp": timestamp,
+        "time_bucket": _time_bucket_name_from_timestamp(timestamp),
+        "lat": lat,
+        "lon": lon,
+        "outcode": ("%s" % ((entry or {}).get("outcode") or "")).strip().upper(),
+        "sector": ("%s" % ((entry or {}).get("sector") or "")).strip().upper(),
+    }
+
+
+def _empty_route_point_db():
+    return {
+        "schema_version": ROUTE_POINT_SCHEMA_VERSION,
+        "updated_at": "",
+        "total_points": 0,
+        "points": [],
+    }
+
+
+def _build_route_point_db(history):
+    db = _empty_route_point_db()
+    points = []
+    for entry in history or []:
+        point = _route_point_record(entry)
+        if point:
+            points.append(point)
+    db["updated_at"] = _timestamp()
+    db["total_points"] = len(points)
+    db["points"] = points
+    return db
+
+
+def _load_or_build_route_point_db():
+    payload = _load_json_dict(ROUTE_POINT_DB_JSON_PATH)
+    points = payload.get("points") if isinstance(payload.get("points"), list) else None
+    schema_ok = int(payload.get("schema_version") or 0) >= ROUTE_POINT_SCHEMA_VERSION
+    if points is not None and schema_ok:
+        payload["schema_version"] = ROUTE_POINT_SCHEMA_VERSION
+        payload["total_points"] = len(points)
+        return payload
+    history = _load_history()
+    return _build_route_point_db(history) if history else _empty_route_point_db()
+
+
+def _update_route_point_db_incremental(db, entry):
+    if not isinstance(db, dict):
+        db = _empty_route_point_db()
+    points = db.get("points")
+    if not isinstance(points, list):
+        points = []
+        db["points"] = points
+    point = _route_point_record(entry)
+    if point:
+        points.append(point)
+    db["schema_version"] = ROUTE_POINT_SCHEMA_VERSION
+    db["updated_at"] = _timestamp()
+    db["total_points"] = len(points)
+    return db
 
 
 def _parse_outcode_family(outcode):
@@ -990,15 +1061,18 @@ def main():
     _append_history(payload)
     beacon_db = _update_beacon_db_incremental(_load_or_build_beacon_db(), payload)
     _write_json(DB_JSON_PATH, beacon_db)
+    route_point_db = _update_route_point_db_incremental(_load_or_build_route_point_db(), payload)
+    _write_json(ROUTE_POINT_DB_JSON_PATH, route_point_db)
     active_offer = _load_active_offer()
     route_stats = _update_route_db(active_offer, payload) if active_offer else {}
     elapsed = time.perf_counter() - started
     print(
-        "[traffic_beacon] saved traffic | %s | %s | db=%s | route=%s | %.3fs"
+        "[traffic_beacon] saved traffic | %s | %s | db=%s | points=%s | route=%s | %.3fs"
         % (
             payload.get("postcode") or payload.get("outcode") or "no_postcode",
             payload.get("timestamp") or "",
             beacon_db.get("total_entries") or 0,
+            route_point_db.get("total_points") or 0,
             route_stats.get("route_key") or "none",
             elapsed,
         )

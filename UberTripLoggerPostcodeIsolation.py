@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v31"
+SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v32"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1084,6 +1084,7 @@ LOGS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "logs")
 DEBUG_DATA_DIR = os.path.join(DATA_ROOT_DIR, "debug")
 TRAFFIC_BEACON_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
 TRAFFIC_ROUTE_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
+TRAFFIC_ROUTE_POINT_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-route-points.json")
 ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
 TEXT_LOG_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
 LEDGER_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
@@ -1122,6 +1123,11 @@ VNImageRequestHandler = ObjCClass("VNImageRequestHandler")
 VNRecognizeTextRequest = ObjCClass("VNRecognizeTextRequest")
 
 _ROUTE_DB_CACHE = {
+    "mtime": None,
+    "payload": None,
+}
+
+_ROUTE_POINT_DB_CACHE = {
     "mtime": None,
     "payload": None,
 }
@@ -1614,35 +1620,21 @@ def _load_traffic_route_db():
 
 
 def _load_traffic_beacon_points():
-    points = []
-    if not os.path.isdir(TRAFFIC_HISTORY_DIR):
-        return points
+    if not os.path.exists(TRAFFIC_ROUTE_POINT_DB_PATH):
+        return []
     try:
-        names = sorted([name for name in os.listdir(TRAFFIC_HISTORY_DIR) if name.endswith(".jsonl")])
+        mtime = os.path.getmtime(TRAFFIC_ROUTE_POINT_DB_PATH)
     except Exception:
-        return points
-    for name in names:
-        path = os.path.join(TRAFFIC_HISTORY_DIR, name)
-        try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
-                for raw_line in handle:
-                    raw_line = raw_line.strip()
-                    if not raw_line:
-                        continue
-                    try:
-                        entry = json.loads(raw_line)
-                    except Exception:
-                        continue
-                    if ("%s" % (entry.get("status") or "")).strip().lower() != "traffic":
-                        continue
-                    lat = _safe_float(entry.get("lat"), 0.0)
-                    lon = _safe_float(entry.get("lon"), 0.0)
-                    if abs(lat) < 0.000001 and abs(lon) < 0.000001:
-                        continue
-                    points.append(entry)
-        except Exception:
-            continue
-    return points
+        return []
+    if _ROUTE_POINT_DB_CACHE.get("mtime") == mtime and isinstance(_ROUTE_POINT_DB_CACHE.get("payload"), dict):
+        payload = _ROUTE_POINT_DB_CACHE.get("payload") or {}
+        points = payload.get("points") or []
+        return points if isinstance(points, list) else []
+    payload = _load_json_dict(TRAFFIC_ROUTE_POINT_DB_PATH)
+    _ROUTE_POINT_DB_CACHE["mtime"] = mtime
+    _ROUTE_POINT_DB_CACHE["payload"] = payload
+    points = payload.get("points") or []
+    return points if isinstance(points, list) else []
 
 
 def _parse_outcode_family(outcode):
