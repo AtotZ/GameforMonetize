@@ -1,4 +1,4 @@
-# version: 2026-06-27-traffic-beacon-centroid-route-v14
+# version: 2026-06-27-traffic-beacon-centroid-route-v15
 import datetime
 import glob
 import json
@@ -35,6 +35,7 @@ CONFIDENCE_HIGH_MIN_SAMPLES = 8
 TRAFFIC_FINE_BUCKET_MINUTES = 15
 CORRIDOR_CELL_SIZE_METERS = 200.0
 DIRECTION_BINS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+GEO_SCHEMA_VERSION = 1
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
@@ -434,6 +435,7 @@ def _build_beacon_db(history):
     db = {
         "updated_at": _timestamp(),
         "total_entries": len(history),
+        "geo_schema_version": GEO_SCHEMA_VERSION,
         "confidence_thresholds": {
             "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
             "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
@@ -537,6 +539,7 @@ def _empty_beacon_db():
     return {
         "updated_at": _timestamp(),
         "total_entries": 0,
+        "geo_schema_version": GEO_SCHEMA_VERSION,
         "confidence_thresholds": {
             "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
             "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
@@ -549,11 +552,14 @@ def _empty_beacon_db():
 
 def _load_or_build_beacon_db():
     payload = _load_json_dict(DB_JSON_PATH)
-    if payload.get("outcodes") is not None and payload.get("sectors") is not None and payload.get("families") is not None:
+    has_structure = payload.get("outcodes") is not None and payload.get("sectors") is not None and payload.get("families") is not None
+    schema_ok = int(payload.get("geo_schema_version") or 0) >= GEO_SCHEMA_VERSION
+    if has_structure and schema_ok:
         payload["confidence_thresholds"] = {
             "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
             "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
         }
+        payload["geo_schema_version"] = GEO_SCHEMA_VERSION
         return _refresh_beacon_db_coverage(payload)
     history = _load_history()
     return _build_beacon_db(history) if history else _empty_beacon_db()
@@ -563,6 +569,7 @@ def _update_beacon_db_incremental(db, entry):
     if not isinstance(db, dict):
         db = _empty_beacon_db()
     db["updated_at"] = _timestamp()
+    db["geo_schema_version"] = GEO_SCHEMA_VERSION
     db["confidence_thresholds"] = {
         "medium_min_samples": CONFIDENCE_MEDIUM_MIN_SAMPLES,
         "high_min_samples": CONFIDENCE_HIGH_MIN_SAMPLES,
