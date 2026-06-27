@@ -2,7 +2,7 @@ import base64
 import datetime
 import glob
 import hashlib
-# version: 2026-06-26-private-data-upload-notify-v14
+# version: 2026-06-27-private-data-upload-route-points-v15
 import json
 import os
 import re
@@ -18,7 +18,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-26-private-upload-notify-v14"
+SCRIPT_BUILD = "2026-06-27-private-upload-route-points-v15"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 8
 REQUEST_RETRY_ATTEMPTS = 2
@@ -109,6 +109,11 @@ DEFAULT_FILE_SPECS = [
         "label": "route_db",
         "local_rel_path": "TestSubjextData/traffic/TrafficRoute-db.json",
         "remote_rel_path": "traffic/TrafficRoute-db.json",
+    },
+    {
+        "label": "route_point_db",
+        "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-route-points.json",
+        "remote_rel_path": "traffic/TrafficBeacon-route-points.json",
     },
 ]
 

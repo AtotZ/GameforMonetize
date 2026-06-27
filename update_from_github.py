@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-26-updater-notify-v22
+# version: 2026-06-27-updater-route-points-v23
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-26-updater-v22"
+SCRIPT_BUILD = "2026-06-27-updater-v23"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -76,6 +76,11 @@ DEFAULT_PRIVATE_SYNC_CONFIG = {
             "label": "route_db",
             "local_rel_path": "TestSubjextData/traffic/TrafficRoute-db.json",
             "remote_rel_path": "traffic/TrafficRoute-db.json",
+        },
+        {
+            "label": "route_point_db",
+            "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-route-points.json",
+            "remote_rel_path": "traffic/TrafficBeacon-route-points.json",
         },
     ],
 }

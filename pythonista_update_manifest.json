@@ -1,34 +1,34 @@
 {
-  "updated_at": "2026-06-26 13:11:00",
-  "manifest_build": "2026-06-26-manifest-v19",
+  "updated_at": "2026-06-27 00:00:00",
+  "manifest_build": "2026-06-27-manifest-v20",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-26-notification-traffic-compact-v25",
-      "script_build": "2026-06-25-postcode-quality-outputs-v24",
-      "bytes": 122950,
-      "content_sha1": "50a6f7f7aec682aa9fc94d32da19beef4f0ef397"
+      "version_comment": "2026-06-27-route-beacon-line-shadow-v31",
+      "script_build": "2026-06-27-route-beacon-line-shadow-v32",
+      "bytes": 141908,
+      "content_sha1": "7c28379936500c0951ffc50bef80616f67a21f23"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
-      "version_comment": "2026-06-26-traffic-beacon-coverage-metrics-v10",
+      "version_comment": "2026-06-27-traffic-beacon-centroid-route-v17",
       "script_build": "",
-      "bytes": 26930,
-      "content_sha1": "b025dfd71aca2edc155849b7de903ff612e0c8f3"
+      "bytes": 43916,
+      "content_sha1": "411cda7bf791023eef933fb41cd03b98aa99b374"
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-26-updater-manifest-bypass-v20",
-      "script_build": "2026-06-26-updater-v20",
-      "bytes": 20728,
-      "content_sha1": "e4e039a3ef2b9272be47a7eb8bd254ddbb75c085"
+      "version_comment": "2026-06-27-updater-route-points-v23",
+      "script_build": "2026-06-27-updater-v23",
+      "bytes": 24495,
+      "content_sha1": "7fe097e21fcee51fcc8f2c784a26ed11e6401c03"
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
-      "version_comment": "2026-06-25-private-data-upload-ledger-v10",
-      "script_build": "2026-06-26-private-upload-power-lite-v12",
-      "bytes": 26915,
-      "content_sha1": "768878ff2eaf17113f3fea50f134c41e99194998"
+      "version_comment": "2026-06-27-private-data-upload-route-points-v15",
+      "script_build": "2026-06-27-private-upload-route-points-v15",
+      "bytes": 36028,
+      "content_sha1": "3eee732a9300aa75eb857ac347b72a311ee9b3a3"
     }
   }
 }

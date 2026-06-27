@@ -1,4 +1,4 @@
-# version: 2026-06-27-traffic-beacon-centroid-route-v16
+# version: 2026-06-27-traffic-beacon-centroid-route-v17
 import datetime
 import glob
 import json
@@ -38,6 +38,9 @@ CORRIDOR_CELL_SIZE_METERS = 200.0
 DIRECTION_BINS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 GEO_SCHEMA_VERSION = 1
 ROUTE_POINT_SCHEMA_VERSION = 1
+COUNTER_MAX_DAYS = 45
+ROUTE_POINT_MAX_ITEMS = MAX_HISTORY_ITEMS
+ROUTE_POINT_MAX_DAYS = 21
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
@@ -179,6 +182,19 @@ def _append_history(entry):
     return path
 
 
+def _prune_days_seen(day_map, max_days=COUNTER_MAX_DAYS):
+    if not isinstance(day_map, dict):
+        return {}
+    keys = sorted([("%s" % key).strip() for key in day_map.keys() if ("%s" % key).strip()])
+    if max_days <= 0 or len(keys) <= max_days:
+        return day_map
+    keep = set(keys[-max_days:])
+    stale = [key for key in list(day_map.keys()) if ("%s" % key).strip() not in keep]
+    for key in stale:
+        day_map.pop(key, None)
+    return day_map
+
+
 def _route_point_record(entry):
     status = ("%s" % ((entry or {}).get("status") or "")).strip().lower()
     lat = round(_safe_float((entry or {}).get("lat"), 0.0), 6)
@@ -198,6 +214,31 @@ def _route_point_record(entry):
     }
 
 
+def _prune_route_points(points):
+    if not isinstance(points, list):
+        return []
+    if ROUTE_POINT_MAX_DAYS > 0:
+        day_keys = sorted(
+            list(
+                {
+                    ("%s" % ((item or {}).get("timestamp") or "")).strip()[:10]
+                    for item in points
+                    if ("%s" % ((item or {}).get("timestamp") or "")).strip()[:10]
+                }
+            )
+        )
+        if len(day_keys) > ROUTE_POINT_MAX_DAYS:
+            keep_days = set(day_keys[-ROUTE_POINT_MAX_DAYS:])
+            points = [
+                item
+                for item in points
+                if ("%s" % ((item or {}).get("timestamp") or "")).strip()[:10] in keep_days
+            ]
+    if ROUTE_POINT_MAX_ITEMS > 0 and len(points) > ROUTE_POINT_MAX_ITEMS:
+        points = points[-ROUTE_POINT_MAX_ITEMS:]
+    return points
+
+
 def _empty_route_point_db():
     return {
         "schema_version": ROUTE_POINT_SCHEMA_VERSION,
@@ -214,6 +255,7 @@ def _build_route_point_db(history):
         point = _route_point_record(entry)
         if point:
             points.append(point)
+    points = _prune_route_points(points)
     db["updated_at"] = _timestamp()
     db["total_points"] = len(points)
     db["points"] = points
@@ -225,8 +267,10 @@ def _load_or_build_route_point_db():
     points = payload.get("points") if isinstance(payload.get("points"), list) else None
     schema_ok = int(payload.get("schema_version") or 0) >= ROUTE_POINT_SCHEMA_VERSION
     if points is not None and schema_ok:
+        points = _prune_route_points(points)
         payload["schema_version"] = ROUTE_POINT_SCHEMA_VERSION
         payload["total_points"] = len(points)
+        payload["points"] = points
         return payload
     history = _load_history()
     return _build_route_point_db(history) if history else _empty_route_point_db()
@@ -242,6 +286,8 @@ def _update_route_point_db_incremental(db, entry):
     point = _route_point_record(entry)
     if point:
         points.append(point)
+    points = _prune_route_points(points)
+    db["points"] = points
     db["schema_version"] = ROUTE_POINT_SCHEMA_VERSION
     db["updated_at"] = _timestamp()
     db["total_points"] = len(points)
@@ -412,6 +458,8 @@ def _refresh_bucket_coverage_metrics(bucket):
     _refresh_geo_metrics(bucket)
     bucket["raw_beacon_hits"] = int(bucket.get("samples") or 0)
     days_seen = bucket.get("days_seen")
+    if isinstance(days_seen, dict):
+        _prune_days_seen(days_seen)
     bucket["unique_day_hits"] = len(days_seen) if isinstance(days_seen, dict) else 0
 
     sector_hits = bucket.get("sector_hits")
