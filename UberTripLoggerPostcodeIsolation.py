@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v35"
+SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v36"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1290,14 +1290,12 @@ def _send_push_notification(title, body):
         content.setBody_("%s" % (body or ""))
         content.setSound_(UNNotificationSound.defaultSound())
 
-        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(1.0, False)
+        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(1.6, False)
         request_id = "TripLoggerLocalNotif-%s" % int(time.time() * 1000)
         request = UNNotificationRequest.requestWithIdentifier_content_trigger_(
             request_id, content, trigger
         )
         center.addNotificationRequest_withCompletionHandler_(request, None)
-        time.sleep(0.12)
-        _open_uber_driver_app()
         return True
     except Exception as exc:
         _runtime_print("[notif] failed: %s" % exc)
@@ -3507,6 +3505,7 @@ def main():
         "body": body_text,
     }
     _write_json(LATEST_JSON_PATH, latest_payload)
+    _open_uber_driver_app()
 
     t_global_end = time.perf_counter()
     _runtime_print("[T1] Leaving Pythonista at %s (Exec time: %.3fs)" % (
