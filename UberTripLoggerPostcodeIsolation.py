@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-route-beacon-line-shadow-v38
+# version: 2026-06-27-route-beacon-line-shadow-v39
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v38"
+SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v39"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1278,6 +1278,8 @@ def _send_push_notification(title, body):
     if ObjCClass is None:
         return False
     try:
+        _open_uber_driver_app()
+
         UNUserNotificationCenter = ObjCClass("UNUserNotificationCenter")
         UNMutableNotificationContent = ObjCClass("UNMutableNotificationContent")
         UNNotificationRequest = ObjCClass("UNNotificationRequest")
@@ -1291,12 +1293,10 @@ def _send_push_notification(title, body):
         content.setSound_(UNNotificationSound.defaultSound())
 
         trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(0.5, False)
-        request_id = "TripLoggerLocalNotif-%s" % int(time.time() * 1000)
         request = UNNotificationRequest.requestWithIdentifier_content_trigger_(
-            request_id, content, trigger
+            "TripLoggerLocalNotif", content, trigger
         )
         center.addNotificationRequest_withCompletionHandler_(request, None)
-        _open_uber_driver_app()
         return True
     except Exception as exc:
         _runtime_print("[notif] failed: %s" % exc)
@@ -3327,8 +3327,43 @@ def main():
     now = datetime.datetime.now()
     traffic_verdict = _traffic_zone_verdict(parsed, now)
     route_shadow = _route_shadow_snapshot(parsed, now)
-    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
     low_rating_decision = _low_rating_decision(parsed, debug)
+
+    if low_rating_decision["should_decline_low_rating"]:
+        title_line = "\u2b50 %.2f | Decline below %.2f" % (
+            low_rating_decision["rating"],
+            LOW_RATING_DECLINE_THRESHOLD,
+        )
+        body_text = "\u2b50 %.2f is below %.2f" % (
+            low_rating_decision["rating"],
+            LOW_RATING_DECLINE_THRESHOLD,
+        )
+    else:
+        traffic_label_compact = _compact_traffic_title_label(parsed, traffic_verdict)
+        traffic_compact = "%s %s" % (traffic_verdict["emoji"], traffic_label_compact)
+        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s · %s" % (
+            parsed["rating"] if parsed["rating"] else 0.0,
+            parsed["price"],
+            traffic_compact,
+            shortcut_source.get("tag") or "PHOTO",
+        )
+        body_line1 = "Real Price \u00a3%.2f/min | \u00a3%.2f/miles" % (
+            metrics["per_min_adj"],
+            metrics["per_mile_including_pickup"],
+        )
+        body_line2 = "%s \u00a3%.2f/min | \u00a3%.2f/miles" % (
+            RSP1_ALIAS_LABEL,
+            metrics["per_min_card"],
+            metrics["per_mile_card"],
+        )
+        body_lines = [body_line1, body_line2]
+        route_direction_summary = ("%s" % (route_shadow.get("direction_summary") or "")).strip()
+        if route_direction_summary:
+            body_lines.append("Route Shadow %s" % route_direction_summary)
+        body_text = "\n".join(body_lines)
+    _send_push_notification(title_line, body_text)
+
+    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -3455,50 +3490,6 @@ def main():
         state_payload["last_asset_id"] = getattr(latest_asset, "local_id", None)
         state_payload["last_created"] = _created_str(getattr(latest_asset, "creation_date", None))
     _save_state(state_payload)
-
-    if low_rating_decision["should_decline_low_rating"]:
-        title_line = "\u2b50 %.2f | Decline below %.2f" % (
-            low_rating_decision["rating"],
-            LOW_RATING_DECLINE_THRESHOLD,
-        )
-        body_text = "\u2b50 %.2f is below %.2f" % (
-            low_rating_decision["rating"],
-            LOW_RATING_DECLINE_THRESHOLD,
-        )
-    else:
-        traffic_label_compact = _compact_traffic_title_label(parsed, traffic_verdict)
-        traffic_compact = "%s %s" % (traffic_verdict["emoji"], traffic_label_compact)
-        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s · %s" % (
-            parsed["rating"] if parsed["rating"] else 0.0,
-            parsed["price"],
-            traffic_compact,
-            shortcut_source.get("tag") or "PHOTO",
-        )
-        body_line1 = "Real Price \u00a3%.2f/min | \u00a3%.2f/miles" % (
-            metrics["per_min_adj"],
-            metrics["per_mile_including_pickup"],
-        )
-        body_line2 = "%s \u00a3%.2f/min | \u00a3%.2f/miles" % (
-            RSP1_ALIAS_LABEL,
-            metrics["per_min_card"],
-            metrics["per_mile_card"],
-        )
-        body_lines = [body_line1, body_line2]
-        route_direction_summary = ("%s" % (route_shadow.get("direction_summary") or "")).strip()
-        if route_direction_summary:
-            body_lines.append("Route Shadow %s" % route_direction_summary)
-        route_line_hits = int(route_line_shadow.get("exact_hits") or 0) + int(route_line_shadow.get("near_hits") or 0)
-        if route_line_hits > 0:
-            body_lines.append(
-                "Route Line x%d | exact %d | near %d"
-                % (
-                    route_line_hits,
-                    int(route_line_shadow.get("exact_hits") or 0),
-                    int(route_line_shadow.get("near_hits") or 0),
-                )
-            )
-        body_text = "\n".join(body_lines)
-    _send_push_notification(title_line, body_text)
 
     t_global_end = time.perf_counter()
     _runtime_print("[T1] Leaving Pythonista at %s (Exec time: %.3fs)" % (
