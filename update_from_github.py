@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-27-updater-cache-bust-v24
+# version: 2026-06-27-updater-notify-flush-v25
 import json
 import os
 import re
@@ -15,13 +15,14 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-27-updater-v24"
+SCRIPT_BUILD = "2026-06-27-updater-v25"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 MAX_CONSOLE_LOG_LINES = 400
 TRIMMED_CONSOLE_LOG_LINES = 250
 MAX_CONSOLE_LOG_BYTES = 48 * 1024
+NOTIFICATION_FLUSH_SECONDS = 0.45
 DEFAULT_PRIVATE_SYNC_CONFIG = {
     "owner": "AtotZ",
     "repo": "UploadData",
@@ -221,6 +222,16 @@ def _send_local_notification(title, body):
         return True
     except Exception:
         return False
+
+
+def _send_local_notification_and_flush(title, body):
+    sent = _send_local_notification(title, body)
+    if sent:
+        try:
+            time.sleep(NOTIFICATION_FLUSH_SECONDS)
+        except Exception:
+            pass
+    return sent
 
 
 def _download_text(url, cache_bust=False):
@@ -606,7 +617,7 @@ def main():
     unchanged_count = len([item for item in results if item.get("status") == "skipped_unchanged"])
     upload_summary = _summarize_private_upload(private_upload_result)
     if private_upload_result.get("skipped_due_to_code_update"):
-        _send_local_notification(
+        _send_local_notification_and_flush(
             "Updater done",
             "Code updated %d, unchanged %d. Upload next run." % (
                 updated_count,
@@ -614,7 +625,7 @@ def main():
             ),
         )
     elif private_upload_result.get("ok"):
-        _send_local_notification(
+        _send_local_notification_and_flush(
             "Updater done",
             "Code updated %d, unchanged %d. Upload sent %d, deferred %d." % (
                 updated_count,
@@ -624,7 +635,7 @@ def main():
             ),
         )
     else:
-        _send_local_notification(
+        _send_local_notification_and_flush(
             "Updater issue",
             "Code updated %d. Upload failed: %s" % (
                 updated_count,
@@ -650,5 +661,9 @@ if __name__ == "__main__":
         except Exception:
             pass
         _log("[updater] failed: %s" % exc)
+        _send_local_notification_and_flush(
+            "Updater issue",
+            "Failed: %s" % ("%s" % exc),
+        )
         raise SystemExit(1)
     raise SystemExit(0)
