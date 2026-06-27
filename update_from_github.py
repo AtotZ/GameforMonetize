@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-27-updater-notify-flush-v25
+# version: 2026-06-27-updater-soft-exit-v26
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-27-updater-v25"
+SCRIPT_BUILD = "2026-06-27-updater-v26"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -665,5 +665,5 @@ if __name__ == "__main__":
             "Updater issue",
             "Failed: %s" % ("%s" % exc),
         )
-        raise SystemExit(1)
-    raise SystemExit(0)
+    else:
+        pass
