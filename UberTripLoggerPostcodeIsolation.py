@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-route-line-audit-v41
+# version: 2026-06-27-route-score-title-v42
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-line-audit-v41"
+SCRIPT_BUILD = "2026-06-27-route-score-title-v42"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1123,6 +1123,11 @@ VNImageRequestHandler = ObjCClass("VNImageRequestHandler")
 VNRecognizeTextRequest = ObjCClass("VNRecognizeTextRequest")
 
 _ROUTE_DB_CACHE = {
+    "mtime": None,
+    "payload": None,
+}
+
+_TRAFFIC_BEACON_DB_CACHE = {
     "mtime": None,
     "payload": None,
 }
@@ -1612,10 +1617,20 @@ ROUTE_LINE_AMBER_SCORE_MIN = 2.5
 
 
 def _load_traffic_beacon_db():
+    if not os.path.exists(TRAFFIC_BEACON_DB_PATH):
+        return {}
+    try:
+        mtime = os.path.getmtime(TRAFFIC_BEACON_DB_PATH)
+    except Exception:
+        return {}
+    if _TRAFFIC_BEACON_DB_CACHE.get("mtime") == mtime and isinstance(_TRAFFIC_BEACON_DB_CACHE.get("payload"), dict):
+        return _TRAFFIC_BEACON_DB_CACHE.get("payload") or {}
     try:
         with open(TRAFFIC_BEACON_DB_PATH, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
             if isinstance(payload, dict):
+                _TRAFFIC_BEACON_DB_CACHE["mtime"] = mtime
+                _TRAFFIC_BEACON_DB_CACHE["payload"] = payload
                 return payload
     except Exception:
         pass
@@ -2688,6 +2703,7 @@ def _route_line_audit_summary(route_line_shadow, traffic_verdict=None):
         "enabled": bool(shadow.get("enabled")),
         "matched": bool(shadow.get("matched")),
         "trap_score": round(float(shadow.get("trap_score") or 0.0), 2),
+        "display_score": int(max(0, round(float(shadow.get("trap_score") or 0.0)))),
         "status_hint": shadow.get("status_hint") or "none",
         "exact_hits": int(shadow.get("exact_hits") or 0),
         "near_hits": int(shadow.get("near_hits") or 0),
@@ -2706,6 +2722,12 @@ def _route_line_audit_summary(route_line_shadow, traffic_verdict=None):
         "adjacent_fine_bucket_count": len(adjacent_fine_buckets),
         "final_route_override": final_source == "route_line_shadow" or final_scope == "route",
     }
+
+
+def _compact_route_score_label(route_line_shadow):
+    shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
+    display_score = int(max(0, round(float(shadow.get("trap_score") or 0.0))))
+    return "R%s" % display_score
 
 
 def _merge_route_line_verdict(base_verdict, route_verdict):
@@ -3504,7 +3526,9 @@ def main():
     debug = parse_result.get("debug") or {}
     metrics = _derive_offer_metrics(parsed)
     now = datetime.datetime.now()
-    traffic_verdict = _traffic_zone_verdict(parsed, now)
+    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
+    traffic_verdict = _traffic_zone_verdict(parsed, now, route_line_shadow)
+    route_line_audit = _route_line_audit_summary(route_line_shadow, traffic_verdict)
     route_shadow = _route_shadow_snapshot(parsed, now)
     low_rating_decision = _low_rating_decision(parsed, debug)
 
@@ -3519,8 +3543,9 @@ def main():
         )
     else:
         traffic_label_compact = _compact_traffic_title_label(parsed, traffic_verdict)
-        traffic_compact = "%s %s" % (traffic_verdict["emoji"], traffic_label_compact)
-        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s · %s" % (
+        route_score_compact = _compact_route_score_label(route_line_shadow)
+        traffic_compact = "%s %s %s" % (traffic_verdict["emoji"], traffic_label_compact, route_score_compact)
+        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s \u00b7 %s" % (
             parsed["rating"] if parsed["rating"] else 0.0,
             parsed["price"],
             traffic_compact,
@@ -3542,9 +3567,6 @@ def main():
         body_text = "\n".join(body_lines)
     _send_push_notification(title_line, body_text)
 
-    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
-    traffic_verdict = _traffic_zone_verdict(parsed, now, route_line_shadow)
-    route_line_audit = _route_line_audit_summary(route_line_shadow, traffic_verdict)
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
