@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-route-beacon-line-shadow-v40
+# version: 2026-06-27-route-line-audit-v41
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-beacon-line-shadow-v40"
+SCRIPT_BUILD = "2026-06-27-route-line-audit-v41"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1218,7 +1218,16 @@ def _daily_jsonl_path(base_dir, stem, day_text):
     return os.path.join(base_dir, "%s-%s.jsonl" % (day, stem))
 
 
-def _write_active_offer(parsed, metrics, traffic_verdict, route_shadow, route_line_shadow, shortcut_source, now_str, ocr_sha1):
+def _write_active_offer(
+    parsed,
+    metrics,
+    traffic_verdict,
+    route_shadow,
+    route_line_audit,
+    shortcut_source,
+    now_str,
+    ocr_sha1,
+):
     payload = {
         "timestamp": now_str,
         "pickup_address": parsed.get("pickup_address") or "",
@@ -1250,7 +1259,7 @@ def _write_active_offer(parsed, metrics, traffic_verdict, route_shadow, route_li
         "ccz_bonus_applied": bool(metrics.get("ccz_bonus_applied")),
         "is_reserved": bool(parsed.get("is_reserved")),
         "route_shadow": route_shadow,
-        "route_line_shadow": route_line_shadow,
+        "route_line_audit": route_line_audit,
         "shortcut_source_tag": shortcut_source.get("tag") or "",
         "ocr_sha1": ocr_sha1 or "",
     }
@@ -2668,6 +2677,37 @@ def _route_line_override_verdict(parsed, route_line_shadow, now_dt=None):
     return None
 
 
+def _route_line_audit_summary(route_line_shadow, traffic_verdict=None):
+    shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
+    verdict = traffic_verdict if isinstance(traffic_verdict, dict) else {}
+    matched_fine_buckets = shadow.get("matched_fine_buckets") or []
+    adjacent_fine_buckets = shadow.get("adjacent_fine_buckets") or []
+    final_source = ("%s" % (verdict.get("source") or "")).strip().lower()
+    final_scope = ("%s" % (verdict.get("scope") or "")).strip().lower()
+    return {
+        "enabled": bool(shadow.get("enabled")),
+        "matched": bool(shadow.get("matched")),
+        "trap_score": round(float(shadow.get("trap_score") or 0.0), 2),
+        "status_hint": shadow.get("status_hint") or "none",
+        "exact_hits": int(shadow.get("exact_hits") or 0),
+        "near_hits": int(shadow.get("near_hits") or 0),
+        "time_bucket_hits": int(shadow.get("time_bucket_hits") or 0),
+        "strong_time_hits": int(shadow.get("strong_time_hits") or 0),
+        "unique_outcodes": int(shadow.get("unique_outcodes") or 0),
+        "unique_sectors": int(shadow.get("unique_sectors") or 0),
+        "top_outcodes": list(shadow.get("top_outcodes") or []),
+        "top_sectors": list(shadow.get("top_sectors") or []),
+        "closest_hit_m": round(float(shadow.get("closest_hit_m") or 0.0), 1),
+        "same_weekday_days": int(shadow.get("same_weekday_days") or 0),
+        "same_weekpart_days": int(shadow.get("same_weekpart_days") or 0),
+        "weekday_relevance": shadow.get("weekday_relevance") or "",
+        "weekday_multiplier": round(float(shadow.get("weekday_multiplier") or 0.0), 2),
+        "matched_fine_bucket_count": len(matched_fine_buckets),
+        "adjacent_fine_bucket_count": len(adjacent_fine_buckets),
+        "final_route_override": final_source == "route_line_shadow" or final_scope == "route",
+    }
+
+
 def _merge_route_line_verdict(base_verdict, route_verdict):
     if not route_verdict:
         return base_verdict
@@ -3504,6 +3544,7 @@ def main():
 
     route_line_shadow = _route_line_shadow_snapshot(parsed, now)
     traffic_verdict = _traffic_zone_verdict(parsed, now, route_line_shadow)
+    route_line_audit = _route_line_audit_summary(route_line_shadow, traffic_verdict)
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -3538,7 +3579,7 @@ def main():
         "traffic_zone_reason": traffic_verdict["reason"],
         "traffic_zone_time_bucket": traffic_verdict["time_bucket"],
         "route_shadow": route_shadow,
-        "route_line_shadow": route_line_shadow,
+        "route_line_audit": route_line_audit,
         "vehicle_type": parsed["vehicle_type"],
         "surge_text": parsed["surge_text"],
         "is_reserved": parsed["is_reserved"],
@@ -3569,7 +3610,7 @@ def main():
         metrics,
         traffic_verdict,
         route_shadow,
-        route_line_shadow,
+        route_line_audit,
         shortcut_source,
         now_str,
         ocr_sha1,
@@ -3612,6 +3653,7 @@ def main():
         "target_progress_local": target_insight,
         "traffic_verdict": traffic_verdict,
         "route_shadow": route_shadow,
+        "route_line_audit": route_line_audit,
         "route_line_shadow": route_line_shadow,
         "active_offer": active_offer_payload,
         "low_rating_decision": low_rating_decision,
