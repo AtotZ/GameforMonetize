@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-27-updater-self-heal-v29
+# version: 2026-06-27-updater-always-refresh-v30
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-27-updater-v29"
+SCRIPT_BUILD = "2026-06-27-updater-v30"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -505,46 +505,14 @@ def _update_one_file(item, manifest_payload):
     url = "%s/%s" % (REPO_RAW_ROOT, item["remote_name"])
     target_path = os.path.join(SCRIPT_DIR, item["local_name"])
     local_sha1 = _read_local_file_sha1(target_path)
-    manifest_entry = _manifest_entry_for(item, manifest_payload)
-    try:
-        source_text = _download_text_verified(url, item, manifest_entry)
-    except RuntimeError as exc:
-        error_text = "%s" % exc
-        if item["local_name"] not in STRICT_MANIFEST_FILES and error_text.startswith("Manifest/raw mismatch"):
-            return {
-                "label": item["label"],
-                "remote_name": item["remote_name"],
-                "local_name": item["local_name"],
-                "target_path": target_path,
-                "download_url": url,
-                "bytes": 0,
-                "version_comment": "",
-                "script_build": "",
-                "content_sha1": "",
-                "status": "deferred_raw_mismatch",
-                "skip_reason": error_text,
-            }
-        raise
+    source_text = _download_text(url, cache_bust=True)
     version_info = _extract_version_from_text(source_text)
     if "404: Not Found" in source_text and len(source_text.strip()) <= 20:
         raise RuntimeError("GitHub returned 404 for %s" % item["remote_name"])
     if "import " not in source_text and "def " not in source_text:
         raise RuntimeError("Downloaded content for %s does not look like Python code." % item["remote_name"])
     content_sha1 = _sha1_bytes(source_text.encode("utf-8"))
-    if os.path.exists(target_path) and local_sha1 == content_sha1:
-        return {
-            "label": item["label"],
-            "remote_name": item["remote_name"],
-            "local_name": item["local_name"],
-            "target_path": target_path,
-            "download_url": url,
-            "bytes": len(source_text.encode("utf-8")),
-            "version_comment": version_info["version_comment"],
-            "script_build": version_info["script_build"],
-            "content_sha1": content_sha1,
-            "status": "skipped_unchanged",
-            "skip_reason": "raw_content_sha1",
-        }
+    changed = local_sha1 != content_sha1
     _write_text(target_path, source_text)
     return {
         "label": item["label"],
@@ -557,6 +525,7 @@ def _update_one_file(item, manifest_payload):
         "script_build": version_info["script_build"],
         "content_sha1": content_sha1,
         "status": "downloaded",
+        "changed": changed,
     }
 
 
@@ -579,14 +548,16 @@ def main():
     for item in FILE_MAP:
         results.append(_update_one_file(item, manifest_payload))
     private_sync_bootstrap = _bootstrap_private_sync_config()
-    downloaded_count = len([item for item in results if item.get("status") == "downloaded"])
-    skipped_due_to_code_update = downloaded_count > 0
+    refreshed_count = len([item for item in results if item.get("status") == "downloaded"])
+    changed_count = len([item for item in results if item.get("changed")])
+    skipped_due_to_code_update = changed_count > 0
     if skipped_due_to_code_update:
         private_upload_result = {
             "ok": True,
             "ran": False,
             "skipped_due_to_code_update": True,
-            "downloaded_count": downloaded_count,
+            "changed_count": changed_count,
+            "refreshed_count": refreshed_count,
             "error": "",
         }
     else:
@@ -607,6 +578,7 @@ def main():
                 "script_build": result["script_build"],
                 "content_sha1": result.get("content_sha1") or "",
                 "status": result.get("status") or "",
+                "changed": bool(result.get("changed")),
                 "skip_reason": result.get("skip_reason") or "",
             }
             for result in results
@@ -632,16 +604,18 @@ def main():
         )
     if private_upload_result.get("skipped_due_to_code_update"):
         _log(
-            "[updater] private upload deferred | code_updated=%s"
-            % private_upload_result.get("downloaded_count", 0)
+            "[updater] private upload deferred | code_changed=%s refreshed=%s"
+            % (
+                private_upload_result.get("changed_count", 0),
+                private_upload_result.get("refreshed_count", 0),
+            )
         )
     elif private_upload_result.get("ok"):
         upload_summary = _summarize_private_upload(private_upload_result)
         _log(
-            "[updater] private upload ok | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s deferred=%s backlog=%s days=%s consecutive=%s power_lite=%s forced_full=%s | at=%s"
+            "[updater] private upload ok | uploaded=%s missing=%s too_large=%s failed=%s deferred=%s backlog=%s days=%s consecutive=%s power_lite=%s forced_full=%s | at=%s"
             % (
                 upload_summary.get("uploaded_count", 0),
-                upload_summary.get("skipped_unchanged_count", 0),
                 upload_summary.get("missing_count", 0),
                 upload_summary.get("too_large_count", 0),
                 upload_summary.get("failed_count", 0),
@@ -657,10 +631,9 @@ def main():
     else:
         upload_summary = _summarize_private_upload(private_upload_result)
         _log(
-            "[updater] private upload failed | uploaded=%s skipped=%s missing=%s too_large=%s failed=%s deferred=%s backlog=%s days=%s consecutive=%s power_lite=%s forced_full=%s | error=%s"
+            "[updater] private upload failed | uploaded=%s missing=%s too_large=%s failed=%s deferred=%s backlog=%s days=%s consecutive=%s power_lite=%s forced_full=%s | error=%s"
             % (
                 upload_summary.get("uploaded_count", 0),
-                upload_summary.get("skipped_unchanged_count", 0),
                 upload_summary.get("missing_count", 0),
                 upload_summary.get("too_large_count", 0),
                 upload_summary.get("failed_count", 0),
@@ -673,23 +646,23 @@ def main():
                 upload_summary.get("error") or upload_summary.get("manifest_error") or "unknown",
             )
         )
-    updated_count = len([item for item in results if item.get("status") == "downloaded"])
-    unchanged_count = len([item for item in results if item.get("status") == "skipped_unchanged"])
+    updated_count = len([item for item in results if item.get("changed")])
+    refreshed_count = len([item for item in results if item.get("status") == "downloaded"])
     upload_summary = _summarize_private_upload(private_upload_result)
     if private_upload_result.get("skipped_due_to_code_update"):
         _send_local_notification_and_flush(
             "Updater done",
-            "Code updated %d, unchanged %d. Upload next run." % (
+            "Code changed %d, refreshed %d. Upload next run." % (
                 updated_count,
-                unchanged_count,
+                refreshed_count,
             ),
         )
     elif private_upload_result.get("ok"):
         _send_local_notification_and_flush(
             "Updater done",
-            "Code updated %d, unchanged %d. Upload sent %d, deferred %d." % (
+            "Code changed %d, refreshed %d. Upload sent %d, deferred %d." % (
                 updated_count,
-                unchanged_count,
+                refreshed_count,
                 upload_summary.get("uploaded_count", 0),
                 upload_summary.get("deferred_power_save_count", 0),
             ),

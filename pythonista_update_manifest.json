@@ -1,6 +1,6 @@
 {
-  "updated_at": "2026-06-27 09:47:25",
-  "manifest_build": "2026-06-27-manifest-v37-bootstrap",
+  "updated_at": "2026-06-27 21:50:00",
+  "manifest_build": "2026-06-27-manifest-v38-always-refresh",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
@@ -14,21 +14,21 @@
       "version_comment": "2026-06-27-traffic-beacon-centroid-route-v17",
       "script_build": "",
       "bytes": 43916,
-      "content_sha1": "411cda7bf791023eef933fb41cd03b98aa99b374"
+      "content_sha1": ""
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-27-updater-self-heal-v29",
-      "script_build": "2026-06-27-updater-v29",
-      "bytes": 27622,
+      "version_comment": "2026-06-27-updater-always-refresh-v30",
+      "script_build": "2026-06-27-updater-v30",
+      "bytes": 26419,
       "content_sha1": ""
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
-      "version_comment": "2026-06-27-private-data-upload-route-points-v15",
-      "script_build": "2026-06-27-private-upload-route-points-v15",
-      "bytes": 36028,
-      "content_sha1": "3eee732a9300aa75eb857ac347b72a311ee9b3a3"
+      "version_comment": "2026-06-27-private-data-upload-always-send-v16",
+      "script_build": "2026-06-27-private-upload-always-send-v16",
+      "bytes": 34527,
+      "content_sha1": ""
     }
   }
 }
