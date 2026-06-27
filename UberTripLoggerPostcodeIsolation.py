@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-route-beacon-line-shadow-v31
+# version: 2026-06-27-route-beacon-line-shadow-v37
 import hashlib
 import json
 import os
@@ -1274,7 +1274,8 @@ def _open_uber_driver_app():
     return False
 
 
-def _send_push_notification(title, body):
+@on_main_thread
+def _queue_push_notification_main_thread(title, body, delay_seconds):
     if ObjCClass is None:
         return False
     try:
@@ -1290,7 +1291,10 @@ def _send_push_notification(title, body):
         content.setBody_("%s" % (body or ""))
         content.setSound_(UNNotificationSound.defaultSound())
 
-        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(1.6, False)
+        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(
+            max(0.25, float(delay_seconds or 0.25)),
+            False,
+        )
         request_id = "TripLoggerLocalNotif-%s" % int(time.time() * 1000)
         request = UNNotificationRequest.requestWithIdentifier_content_trigger_(
             request_id, content, trigger
@@ -1300,6 +1304,15 @@ def _send_push_notification(title, body):
     except Exception as exc:
         _runtime_print("[notif] failed: %s" % exc)
         return False
+
+
+def _send_push_notification(title, body):
+    for delay_seconds, flush_seconds in ((0.35, 0.18), (0.90, 0.24)):
+        if _queue_push_notification_main_thread(title, body, delay_seconds):
+            time.sleep(flush_seconds)
+            return True
+        time.sleep(0.08)
+    return False
 
 
 def _recent_assets(limit=RECENT_ASSET_SCAN_LIMIT):
@@ -3505,6 +3518,8 @@ def main():
         "body": body_text,
     }
     _write_json(LATEST_JSON_PATH, latest_payload)
+    if notification_queued:
+        time.sleep(0.12)
     _open_uber_driver_app()
 
     t_global_end = time.perf_counter()
