@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-28-route-line-grid-post-notify-v52
+# version: 2026-06-28-route-line-grid-post-notify-v53
 import hashlib
 import json
 import os
@@ -79,6 +79,7 @@ if True:
     COUNTRY_TOKENS = [" GB", " UK", ",GB", ",UK", ", Gb", ", Uk"]
     VALID_OUTWARD_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?$")
     VALID_INWARD_RE = re.compile(r"^\d[A-Z]{2}$")
+    VALID_SINGLE_LETTER_POSTAL_AREAS = set(["B", "E", "G", "L", "M", "N", "S", "W"])
     POSTCODE_OUTWARD_PATTERNS = ("A9", "A9A", "A99", "AA9", "AA9A", "AA99")
     POSTCODE_OUTWARD_LOOSE_RE = re.compile(r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\b", re.IGNORECASE)
     POSTCODE_FULL_LOOSE_RE = re.compile(
@@ -227,19 +228,29 @@ if True:
             else:
                 chars.append(_normalize_postcode_digit_char(source))
         candidate = "".join(chars)
-        return candidate if VALID_OUTWARD_RE.match(candidate) else ""
+        return candidate if _is_valid_outward_candidate(candidate) else ""
+
+    def _is_valid_outward_candidate(candidate):
+        value = ("%s" % (candidate or "")).upper().strip()
+        if not value or not VALID_OUTWARD_RE.match(value):
+            return False
+        if len(value) >= 2 and value[0].isalpha() and value[1].isdigit():
+            return value[0] in VALID_SINGLE_LETTER_POSTAL_AREAS
+        return True
 
     def _normalize_postcode_outward_token(token):
         raw = re.sub(r"[^A-Z0-9]", "", _transliterate_postcode_confusables(token).upper())
         if not raw:
             return ""
+        if raw == "WCH":
+            return "WC2H"
         if len(raw) == 3 and raw[0] == "U" and raw[1] in ("8", "B") and raw[2].isdigit():
             return "UB%s" % raw[2]
         if len(raw) == 4 and raw[-1:] in ("O", "I", "L", "Q", "Z", "S", "B", "G"):
             digit_tail = "%s%s" % (raw[:3], _normalize_postcode_digit_char(raw[3]))
-            if VALID_OUTWARD_RE.match(digit_tail):
+            if _is_valid_outward_candidate(digit_tail):
                 return digit_tail
-        if VALID_OUTWARD_RE.match(raw) and not any(ch in "IOZLSBQ" for ch in raw):
+        if _is_valid_outward_candidate(raw) and not any(ch in "IOZLSBQ" for ch in raw):
             return raw
         candidates = []
         for pattern in POSTCODE_OUTWARD_PATTERNS:
@@ -253,10 +264,10 @@ if True:
                     return digit_tail[0]
             return candidates[0]
         fixed = _fix_postcode_digit_confusions(raw)
-        if VALID_OUTWARD_RE.match(fixed):
+        if _is_valid_outward_candidate(fixed):
             return fixed
         l_fixed = fixed.replace("L", "1")
-        return l_fixed if VALID_OUTWARD_RE.match(l_fixed) else ""
+        return l_fixed if _is_valid_outward_candidate(l_fixed) else ""
 
     def _extract_full_postcode(text):
         line = _fix_postcode_ocr("%s" % (text or ""))
@@ -817,6 +828,70 @@ if True:
         leading = re.sub(r"\s+", " ", leading).strip(" ,.;-")
         return ("%s, %s" % (leading, full)).strip(" ,.;-")
 
+    def _strip_invalid_single_letter_postcode_artifacts(value):
+        line = "%s" % (value or "")
+
+        def replace(match):
+            outward = _normalize_postcode_outward_token(match.group(1) or "")
+            inward = _normalize_postcode_inward_token(match.group(2) or "")
+            if outward and inward:
+                return "%s %s" % (outward, inward)
+            return ""
+
+        cleaned = re.sub(
+            r"\b([A-Z]{1,2}[0-9][A-Z0-9]?)\s*([0-9][A-Z]{2})\b",
+            replace,
+            line,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(r"\s+", " ", cleaned).strip(" ,.;-")
+
+    def _extract_postcode_like_spans(value):
+        line = re.sub(r"\s+", " ", _fix_postcode_ocr("%s" % (value or ""))).strip()
+        spans = []
+        seen = set()
+        for pattern in (UK_PC_RE, UK_PC_TERMINAL_RE):
+            for match in pattern.finditer(line):
+                outward = _normalize_postcode_outward_token(match.group(1))
+                inward = _normalize_postcode_inward_token(match.group(2))
+                if not outward or not inward:
+                    continue
+                span = (match.start(), match.end(), "full")
+                if span not in seen:
+                    seen.add(span)
+                    spans.append({"start": span[0], "end": span[1], "kind": "full"})
+        for pattern in (UK_PC_SECTOR_TERMINAL_RE,):
+            for match in pattern.finditer(line):
+                outward = _normalize_postcode_outward_token(match.group(1))
+                inward_digit = _normalize_postcode_digit_char(match.group(2))
+                if not outward or not inward_digit:
+                    continue
+                span = (match.start(), match.end(), "sector")
+                if span not in seen:
+                    seen.add(span)
+                    spans.append({"start": span[0], "end": span[1], "kind": "sector"})
+        spans.sort(key=lambda item: (item["start"], item["end"], item["kind"]))
+        return line, spans
+
+    def _trim_merged_address_tail(value):
+        line, spans = _extract_postcode_like_spans(value)
+        if not spans:
+            return line
+        full_spans = [item for item in spans if item["kind"] == "full"]
+        if not full_spans:
+            return line
+        last_full = full_spans[-1]
+        earlier = [item for item in spans if item["end"] <= last_full["start"]]
+        if not earlier:
+            return line
+        previous = earlier[-1]
+        tail = line[previous["end"] :].strip(" ,.;-")
+        if not tail or len(tail) < 8:
+            return line
+        if "," not in tail and " " not in tail:
+            return line
+        return tail
+
     def _clean_address_line(raw_line):
         line = _truncate_at_terminal(raw_line)
         line = _trim_at_first_overlay_stopword(line)
@@ -831,6 +906,8 @@ if True:
         line = re.sub(r"\bWIG\b", "W1G", line)
         line = _normalize_house_number_ocr(line)
         line = _normalize_address_postcode_text(line)
+        line = _strip_invalid_single_letter_postcode_artifacts(line)
+        line = _trim_merged_address_tail(line)
         line = _remove_embedded_duplicate_postcode(line)
         return line.rstrip(" ,.;-")
 
@@ -943,6 +1020,8 @@ if True:
             value = normalized.get(field_name) or ""
             value = _normalize_house_number_ocr(value)
             value = _normalize_address_postcode_text(value)
+            value = _strip_invalid_single_letter_postcode_artifacts(value)
+            value = _trim_merged_address_tail(value)
             normalized[field_name] = _remove_embedded_duplicate_postcode(value)
         pickup_postcode = _derive_postcode_fields(normalized.get("pickup_address") or "")
         dropoff_postcode = _derive_postcode_fields(normalized.get("dropoff_address") or "")
@@ -1049,7 +1128,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-28-route-line-grid-post-notify-v52"
+SCRIPT_BUILD = "2026-06-28-route-line-grid-post-notify-v53"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
