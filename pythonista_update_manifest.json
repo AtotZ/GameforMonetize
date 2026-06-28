@@ -1,12 +1,12 @@
 {
-  "updated_at": "2026-06-27 22:40:00",
-  "manifest_build": "2026-06-27-manifest-v41-notify-queue-open",
+  "updated_at": "2026-06-27 23:05:00",
+  "manifest_build": "2026-06-27-manifest-v42-notify-working-restore",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-27-notify-queue-then-open-v46",
-      "script_build": "2026-06-27-notify-queue-then-open-v46",
-      "bytes": 159367,
+      "version_comment": "2026-06-27-notify-working-restore-v47",
+      "script_build": "2026-06-27-notify-working-restore-v47",
+      "bytes": 159602,
       "content_sha1": ""
     },
     "traffic_beacon.py": {
