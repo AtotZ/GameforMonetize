@@ -1,6 +1,6 @@
 {
   "updated_at": "2026-06-27 23:55:00",
-  "manifest_build": "2026-06-27-manifest-v46-line-grid-rebuild",
+  "manifest_build": "2026-06-27-manifest-v47-upload-line-grid",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
@@ -25,10 +25,10 @@
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
-      "version_comment": "2026-06-27-private-data-upload-always-send-v16",
-      "script_build": "2026-06-27-private-upload-always-send-v16",
-      "bytes": 34527,
-      "content_sha1": ""
+      "version_comment": "2026-06-27-private-data-upload-line-grid-v17",
+      "script_build": "2026-06-27-private-upload-line-grid-v17",
+      "bytes": 34748,
+      "content_sha1": "b58cfa6fd04679bb11413121560e9feab6978fb3"
     }
   }
 }

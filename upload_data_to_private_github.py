@@ -2,7 +2,7 @@ import base64
 import datetime
 import glob
 import hashlib
-# version: 2026-06-27-private-data-upload-always-send-v16
+# version: 2026-06-27-private-data-upload-line-grid-v17
 import json
 import os
 import re
@@ -18,7 +18,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-27-private-upload-always-send-v16"
+SCRIPT_BUILD = "2026-06-27-private-upload-line-grid-v17"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 8
 REQUEST_RETRY_ATTEMPTS = 2
@@ -36,6 +36,7 @@ POWER_LITE_ALLOWED_LABELS = {
     "offer_latest_debug",
     "traffic_latest",
     "traffic_db",
+    "traffic_line_grid",
     "route_db",
 }
 
@@ -104,6 +105,11 @@ DEFAULT_FILE_SPECS = [
         "label": "traffic_db",
         "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-db.json",
         "remote_rel_path": "traffic/TrafficBeacon-db.json",
+    },
+    {
+        "label": "traffic_line_grid",
+        "local_rel_path": "TestSubjextData/traffic/TrafficBeacon-line-grid.json",
+        "remote_rel_path": "traffic/TrafficBeacon-line-grid.json",
     },
     {
         "label": "route_db",
