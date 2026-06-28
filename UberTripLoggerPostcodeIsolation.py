@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-notify-locked-beacon-count-v49
+# version: 2026-06-27-notify-hard-revert-v48
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-notify-locked-beacon-count-v49"
+SCRIPT_BUILD = "2026-06-27-notify-hard-revert-v48"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -3543,7 +3543,6 @@ def main():
     metrics = _derive_offer_metrics(parsed)
     now = datetime.datetime.now()
     traffic_verdict = _traffic_zone_verdict(parsed, now)
-    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
     route_shadow = _route_shadow_snapshot(parsed, now)
     low_rating_decision = _low_rating_decision(parsed, debug)
 
@@ -3557,7 +3556,8 @@ def main():
             LOW_RATING_DECLINE_THRESHOLD,
         )
     else:
-        traffic_compact = _compact_traffic_notification_token(traffic_verdict, route_line_shadow)
+        traffic_label_compact = _compact_traffic_title_label(parsed, traffic_verdict)
+        traffic_compact = "%s %s" % (traffic_verdict["emoji"], traffic_label_compact)
         title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s \u00b7 %s" % (
             parsed["rating"] if parsed["rating"] else 0.0,
             parsed["price"],
@@ -3578,8 +3578,9 @@ def main():
         if route_direction_summary:
             body_lines.append("Route Shadow %s" % route_direction_summary)
         body_text = "\n".join(body_lines)
-    # Notification path locked to the last known working flow. Do not change send order here.
     _send_push_notification(title_line, body_text)
+
+    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
     traffic_verdict = _traffic_zone_verdict(parsed, now, route_line_shadow)
     route_line_audit = _route_line_audit_summary(route_line_shadow, traffic_verdict)
     today_date = now.strftime("%Y-%m-%d")
