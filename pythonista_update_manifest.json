@@ -1,6 +1,6 @@
 {
   "updated_at": "2026-06-27 23:55:00",
-  "manifest_build": "2026-06-27-manifest-v45-route-line-grid-shadow",
+  "manifest_build": "2026-06-27-manifest-v46-line-grid-rebuild",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
@@ -11,10 +11,10 @@
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
-      "version_comment": "2026-06-27-traffic-line-grid-builder-v18",
+      "version_comment": "2026-06-27-traffic-line-grid-rebuild-v19",
       "script_build": "",
-      "bytes": 49997,
-      "content_sha1": ""
+      "bytes": 50327,
+      "content_sha1": "48ecc9f1e51ce04bfa7fd6b82555436bd165b959"
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",

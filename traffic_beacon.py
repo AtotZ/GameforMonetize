@@ -1,4 +1,4 @@
-# version: 2026-06-27-traffic-line-grid-builder-v18
+# version: 2026-06-27-traffic-line-grid-rebuild-v19
 import datetime
 import glob
 import json
@@ -41,6 +41,7 @@ DIRECTION_BINS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 GEO_SCHEMA_VERSION = 1
 ROUTE_POINT_SCHEMA_VERSION = 1
 LINE_GRID_SCHEMA_VERSION = 1
+LINE_GRID_REBUILD_STAMP = "2026-06-27-line-grid-full-history-v19"
 COUNTER_MAX_DAYS = 45
 ROUTE_POINT_MAX_ITEMS = MAX_HISTORY_ITEMS
 ROUTE_POINT_MAX_DAYS = 21
@@ -302,6 +303,7 @@ def _update_route_point_db_incremental(db, entry):
 def _empty_line_grid_db():
     return {
         "schema_version": LINE_GRID_SCHEMA_VERSION,
+        "rebuild_stamp": LINE_GRID_REBUILD_STAMP,
         "updated_at": "",
         "origin_lat": LONDON_GRID_ORIGIN_LAT,
         "origin_lon": LONDON_GRID_ORIGIN_LON,
@@ -373,8 +375,10 @@ def _load_or_build_line_grid_db():
     payload = _load_json_dict(LINE_GRID_DB_JSON_PATH)
     cells = payload.get("cells") if isinstance(payload.get("cells"), dict) else None
     schema_ok = int(payload.get("schema_version") or 0) >= LINE_GRID_SCHEMA_VERSION
-    if cells is not None and schema_ok:
+    stamp_ok = ("%s" % (payload.get("rebuild_stamp") or "")).strip() == LINE_GRID_REBUILD_STAMP
+    if cells is not None and schema_ok and stamp_ok:
         payload["schema_version"] = LINE_GRID_SCHEMA_VERSION
+        payload["rebuild_stamp"] = LINE_GRID_REBUILD_STAMP
         payload["origin_lat"] = LONDON_GRID_ORIGIN_LAT
         payload["origin_lon"] = LONDON_GRID_ORIGIN_LON
         payload["cell_size_m"] = LINE_GRID_CELL_SIZE_METERS
@@ -390,6 +394,7 @@ def _update_line_grid_db_incremental(db, entry):
     if not isinstance(db, dict):
         db = _empty_line_grid_db()
     db["schema_version"] = LINE_GRID_SCHEMA_VERSION
+    db["rebuild_stamp"] = LINE_GRID_REBUILD_STAMP
     db["origin_lat"] = LONDON_GRID_ORIGIN_LAT
     db["origin_lon"] = LONDON_GRID_ORIGIN_LON
     db["cell_size_m"] = LINE_GRID_CELL_SIZE_METERS
