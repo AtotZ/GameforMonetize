@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-06-28 00:25:00",
-  "manifest_build": "2026-06-28-manifest-v51-postcode-cleanup",
+  "updated_at": "2026-06-28 01:05:00",
+  "manifest_build": "2026-06-28-manifest-v52-parkhurst-blacklist",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-28-route-line-grid-post-notify-v53",
-      "script_build": "2026-06-28-route-line-grid-post-notify-v53",
-      "bytes": 169350,
-      "content_sha1": "155aecb4572319fc7b35b7940fb61b749e3202ae"
+      "version_comment": "2026-06-28-route-line-grid-post-notify-v54",
+      "script_build": "2026-06-28-route-line-grid-post-notify-v54",
+      "bytes": 170022,
+      "content_sha1": "b3dc36065319a7ce8130190b3a1703fbe15ccd23"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",

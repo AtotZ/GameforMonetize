@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-28-route-line-grid-post-notify-v53
+# version: 2026-06-28-route-line-grid-post-notify-v54
 import hashlib
 import json
 import os
@@ -1128,7 +1128,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-28-route-line-grid-post-notify-v53"
+SCRIPT_BUILD = "2026-06-28-route-line-grid-post-notify-v54"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1679,6 +1679,13 @@ CENTRAL_EDGE_RULES = [
         "name": "Westminster",
         "keywords": ["westminster", "big ben", "parliament", "whitehall", "westminster bridge"],
         "outcodes": ["SW1A", "SW1H", "SW1P"],
+    },
+]
+OPERATOR_BLACKLIST_ROAD_RULES = [
+    {
+        "name": "Parkhurst trap",
+        "keywords": ["parkhurst road", "holloway road"],
+        "outcodes": ["N7", "N19"],
     },
 ]
 
@@ -3016,9 +3023,22 @@ def _match_central_edge_zone(address_text, outcode):
     return ""
 
 
+def _match_operator_blacklist_road(address_text, outcode):
+    for rule in OPERATOR_BLACKLIST_ROAD_RULES:
+        if _zone_matches_rule(address_text, outcode, rule):
+            return rule["name"]
+    return ""
+
+
 def _traffic_scope_verdict(scope, address_text, outcode, time_bucket, postcode_quality="none"):
+    operator_blacklist_name = _match_operator_blacklist_road(address_text, outcode)
     zone_name = _match_central_edge_zone(address_text, outcode)
     outcode_is_trusted = _postcode_quality_rank(postcode_quality) >= _postcode_quality_rank("sector")
+
+    if operator_blacklist_name:
+        verdict = _traffic_verdict_payload("RED", operator_blacklist_name, scope, "operator_blacklist_road", time_bucket)
+        verdict["source"] = "hardcoded"
+        return verdict
 
     if scope == "dropoff":
         if outcode_is_trusted and _is_red_family_outcode(outcode):
