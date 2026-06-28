@@ -1,4 +1,4 @@
-# version: 2026-06-27-traffic-line-grid-rebuild-v19
+# version: 2026-06-28-traffic-notify-early-v20
 import datetime
 import glob
 import json
@@ -155,8 +155,10 @@ def _send_local_notification(title, body):
         identifier = "TrafficBeaconNotif-%d" % int(time.time() * 1000)
         request = UNNotificationRequest.requestWithIdentifier_content_trigger_(identifier, content, trigger)
         center.addNotificationRequest_withCompletionHandler_(request, None)
+        time.sleep(0.05)
         return True
-    except Exception:
+    except Exception as exc:
+        print("[traffic_beacon] notification failed: %s" % exc)
         return False
 
 
@@ -1264,6 +1266,10 @@ def main():
     payload = _build_beacon_payload("traffic")
     _write_json(LATEST_JSON_PATH, payload)
     _append_history(payload)
+    _send_local_notification(
+        "Beacon saved %s" % (payload.get("postcode") or payload.get("outcode") or "no_postcode"),
+        _compact_address(payload.get("address") or payload.get("placemark", {}).get("name") or "Address unavailable"),
+    )
     beacon_db = _update_beacon_db_incremental(_load_or_build_beacon_db(), payload)
     _write_json(DB_JSON_PATH, beacon_db)
     route_point_db = _update_route_point_db_incremental(_load_or_build_route_point_db(), payload)
@@ -1284,10 +1290,6 @@ def main():
             route_stats.get("route_key") or "none",
             elapsed,
         )
-    )
-    _send_local_notification(
-        "Beacon saved %s" % (payload.get("postcode") or payload.get("outcode") or "no_postcode"),
-        _compact_address(payload.get("address") or payload.get("placemark", {}).get("name") or "Address unavailable"),
     )
 
 
