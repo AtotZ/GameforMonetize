@@ -9,7 +9,8 @@ If you are continuing this project in a future chat or handing it to another eng
 1. `IOS_APP_HANDOFF.md`
 2. `IOS_APP_IMPLEMENTATION_PLAN.md`
 3. `IOS_TRIP_STATE_MACHINE.md`
-4. `PYTHONISTA_PORTFOLIO.md`
+4. `IOS_NATIVE_DATA_MODEL.md`
+5. `PYTHONISTA_PORTFOLIO.md`
 
 These files explain:
 
@@ -17,6 +18,7 @@ These files explain:
 - the parent OnisAI architecture this work inherits from
 - the intended native iOS app direction
 - the GPS/state logic for accepted, declined, and completed trip inference
+- the SwiftData-first native persistence model
 - which ideas are proven, shadow-mode, or still aspirational
 
 ## Project Context
@@ -25,3 +27,4 @@ These files explain:
 - [IOS_APP_HANDOFF.md](IOS_APP_HANDOFF.md)
 - [IOS_APP_IMPLEMENTATION_PLAN.md](IOS_APP_IMPLEMENTATION_PLAN.md)
 - [IOS_TRIP_STATE_MACHINE.md](IOS_TRIP_STATE_MACHINE.md)
+- [IOS_NATIVE_DATA_MODEL.md](IOS_NATIVE_DATA_MODEL.md)

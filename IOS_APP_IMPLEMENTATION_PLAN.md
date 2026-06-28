@@ -98,7 +98,8 @@ So this plan is a continuation and productization of that architecture, using th
 Use local structured persistence, not loose files as the primary runtime mechanism.
 
 Recommended:
-- SQLite or SwiftData/Core Data for app runtime
+- SwiftData for app runtime
+- Core Data compatibility if needed beneath the same model design
 - JSON export snapshots for debug and backup
 
 Core entities:
@@ -111,6 +112,10 @@ Core entities:
 - `OperatorRule`
 - `DecisionSnapshot`
 - `TripOutcome`
+
+Detailed schema and entity design live in:
+
+- `IOS_NATIVE_DATA_MODEL.md`
 
 ## Data Model
 
