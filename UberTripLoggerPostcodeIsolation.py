@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-notify-before-open-uber-v45
+# version: 2026-06-27-notify-queue-then-open-v46
 import hashlib
 import json
 import os
@@ -1049,9 +1049,8 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-notify-before-open-uber-v45"
+SCRIPT_BUILD = "2026-06-27-notify-queue-then-open-v46"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
-NOTIFICATION_FLUSH_SECONDS = 0.35
 
 t_global_start = time.perf_counter()
 RUNTIME_STDOUT_ENABLED = False
@@ -1289,7 +1288,8 @@ def _open_uber_driver_app():
     return False
 
 
-def _send_push_notification(title, body):
+@on_main_thread
+def _queue_push_notification_main_thread(title, body, delay_seconds):
     if ObjCClass is None:
         return False
     try:
@@ -1305,17 +1305,24 @@ def _send_push_notification(title, body):
         content.setBody_(body)
         content.setSound_(UNNotificationSound.defaultSound())
 
-        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(0.5, False)
+        trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval_repeats_(delay_seconds, False)
         request = UNNotificationRequest.requestWithIdentifier_content_trigger_(
             "TripLoggerLocalNotif", content, trigger
         )
         center.addNotificationRequest_withCompletionHandler_(request, None)
-        time.sleep(NOTIFICATION_FLUSH_SECONDS)
-        _open_uber_driver_app()
         return True
     except Exception as exc:
-        _runtime_print("[notif] failed: %s" % exc)
+        _runtime_print("[notif] queue failed: %s" % exc)
         return False
+
+
+def _send_push_notification(title, body):
+    for delay_seconds, flush_seconds in ((0.35, 0.18), (0.90, 0.24)):
+        if _queue_push_notification_main_thread(title, body, delay_seconds):
+            time.sleep(flush_seconds)
+            return True
+        time.sleep(0.08)
+    return False
 
 
 def _recent_assets(limit=RECENT_ASSET_SCAN_LIMIT):
@@ -3590,7 +3597,6 @@ def main():
                 )
             )
         body_text = "\n".join(body_lines)
-    _send_push_notification(title_line, body_text)
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -3704,7 +3710,16 @@ def main():
         "active_offer": active_offer_payload,
         "low_rating_decision": low_rating_decision,
     }
+    notification_queued = _send_push_notification(title_line, body_text)
+    latest_payload["notification"] = {
+        "queued": bool(notification_queued),
+        "title": title_line,
+        "body": body_text,
+    }
     _write_json(LATEST_JSON_PATH, latest_payload)
+    if notification_queued:
+        time.sleep(0.12)
+    _open_uber_driver_app()
 
     state_payload = dict(state or {})
     state_payload["last_ocr_sha1"] = ocr_sha1
