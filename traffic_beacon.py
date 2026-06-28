@@ -1,4 +1,4 @@
-# version: 2026-06-27-traffic-beacon-centroid-route-v17
+# version: 2026-06-27-traffic-line-grid-builder-v18
 import datetime
 import glob
 import json
@@ -29,18 +29,23 @@ DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
 ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
 ROUTE_DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
 ROUTE_POINT_DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-route-points.json")
+LINE_GRID_DB_JSON_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-line-grid.json")
 MAX_HISTORY_ITEMS = 2000
 ACTIVE_OFFER_MAX_AGE_SECONDS = 6 * 60 * 60
 CONFIDENCE_MEDIUM_MIN_SAMPLES = 3
 CONFIDENCE_HIGH_MIN_SAMPLES = 8
 TRAFFIC_FINE_BUCKET_MINUTES = 15
 CORRIDOR_CELL_SIZE_METERS = 200.0
+LINE_GRID_CELL_SIZE_METERS = 180.0
 DIRECTION_BINS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 GEO_SCHEMA_VERSION = 1
 ROUTE_POINT_SCHEMA_VERSION = 1
+LINE_GRID_SCHEMA_VERSION = 1
 COUNTER_MAX_DAYS = 45
 ROUTE_POINT_MAX_ITEMS = MAX_HISTORY_ITEMS
 ROUTE_POINT_MAX_DAYS = 21
+LONDON_GRID_ORIGIN_LAT = 51.5074
+LONDON_GRID_ORIGIN_LON = -0.1278
 
 UK_POSTCODE_RE = re.compile(
     r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*([0-9][A-Z]{2})\b",
@@ -294,6 +299,110 @@ def _update_route_point_db_incremental(db, entry):
     return db
 
 
+def _empty_line_grid_db():
+    return {
+        "schema_version": LINE_GRID_SCHEMA_VERSION,
+        "updated_at": "",
+        "origin_lat": LONDON_GRID_ORIGIN_LAT,
+        "origin_lon": LONDON_GRID_ORIGIN_LON,
+        "cell_size_m": LINE_GRID_CELL_SIZE_METERS,
+        "total_entries": 0,
+        "total_cells": 0,
+        "cells": {},
+    }
+
+
+def _line_grid_cell_bucket(cell_key, x_index, y_index, center_x, center_y, center_lat, center_lon):
+    return {
+        "cell": cell_key,
+        "x_index": int(x_index),
+        "y_index": int(y_index),
+        "center_x_m": round(float(center_x or 0.0), 1),
+        "center_y_m": round(float(center_y or 0.0), 1),
+        "center_lat": round(float(center_lat or 0.0), 6),
+        "center_lon": round(float(center_lon or 0.0), 6),
+        "beacon_outcodes": {},
+        "beacon_sectors": {},
+        **_empty_counter()
+    }
+
+
+def _touch_line_grid_cell(db, entry):
+    if not isinstance(db, dict):
+        return
+    status = ("%s" % ((entry or {}).get("status") or "")).strip().lower()
+    if status not in ("traffic", "no_traffic"):
+        return
+    cell_key, x_index, y_index, center_x, center_y, center_lat, center_lon = _line_grid_cell_key(
+        (entry or {}).get("lat"),
+        (entry or {}).get("lon"),
+    )
+    if not cell_key:
+        return
+    cells = db.setdefault("cells", {})
+    bucket = cells.setdefault(
+        cell_key,
+        _line_grid_cell_bucket(cell_key, x_index, y_index, center_x, center_y, center_lat, center_lon),
+    )
+    timestamp = (entry or {}).get("timestamp") or ""
+    _bump_counter(bucket, status, timestamp)
+    outcode = ("%s" % ((entry or {}).get("outcode") or "")).strip().upper()
+    sector = ("%s" % ((entry or {}).get("sector") or "")).strip().upper()
+    if outcode:
+        bucket["beacon_outcodes"][outcode] = int(bucket["beacon_outcodes"].get(outcode) or 0) + 1
+    if sector:
+        bucket["beacon_sectors"][sector] = int(bucket["beacon_sectors"].get(sector) or 0) + 1
+    _refresh_bucket_coverage_metrics(bucket)
+
+
+def _build_line_grid_db(history):
+    db = _empty_line_grid_db()
+    for entry in history or []:
+        status = ("%s" % ((entry or {}).get("status") or "")).strip().lower()
+        if status not in ("traffic", "no_traffic"):
+            continue
+        db["total_entries"] = int(db.get("total_entries") or 0) + 1
+        _touch_line_grid_cell(db, entry)
+    cells = db.get("cells") or {}
+    db["updated_at"] = _timestamp()
+    db["total_cells"] = len(cells) if isinstance(cells, dict) else 0
+    return db
+
+
+def _load_or_build_line_grid_db():
+    payload = _load_json_dict(LINE_GRID_DB_JSON_PATH)
+    cells = payload.get("cells") if isinstance(payload.get("cells"), dict) else None
+    schema_ok = int(payload.get("schema_version") or 0) >= LINE_GRID_SCHEMA_VERSION
+    if cells is not None and schema_ok:
+        payload["schema_version"] = LINE_GRID_SCHEMA_VERSION
+        payload["origin_lat"] = LONDON_GRID_ORIGIN_LAT
+        payload["origin_lon"] = LONDON_GRID_ORIGIN_LON
+        payload["cell_size_m"] = LINE_GRID_CELL_SIZE_METERS
+        payload["total_cells"] = len(cells)
+        for bucket in cells.values():
+            _refresh_bucket_coverage_metrics(bucket)
+        return payload
+    history = _load_history()
+    return _build_line_grid_db(history) if history else _empty_line_grid_db()
+
+
+def _update_line_grid_db_incremental(db, entry):
+    if not isinstance(db, dict):
+        db = _empty_line_grid_db()
+    db["schema_version"] = LINE_GRID_SCHEMA_VERSION
+    db["origin_lat"] = LONDON_GRID_ORIGIN_LAT
+    db["origin_lon"] = LONDON_GRID_ORIGIN_LON
+    db["cell_size_m"] = LINE_GRID_CELL_SIZE_METERS
+    db["updated_at"] = _timestamp()
+    status = ("%s" % ((entry or {}).get("status") or "")).strip().lower()
+    if status in ("traffic", "no_traffic"):
+        db["total_entries"] = int(db.get("total_entries") or 0) + 1
+        _touch_line_grid_cell(db, entry)
+    cells = db.get("cells") or {}
+    db["total_cells"] = len(cells) if isinstance(cells, dict) else 0
+    return db
+
+
 def _parse_outcode_family(outcode):
     match = re.match(r"^([A-Z]{1,2})(\d{1,2})([A-Z]?)$", ("%s" % (outcode or "")).upper())
     if not match:
@@ -411,6 +520,49 @@ def _corridor_segment_bearing(from_lat, from_lon, to_lat, to_lon):
         return -1.0
     bearing = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
     return round(bearing, 2)
+
+
+def _line_grid_xy_meters(latitude, longitude):
+    earth_radius = 6371000.0
+    lat = _safe_float(latitude, 0.0)
+    lon = _safe_float(longitude, 0.0)
+    if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+        return 0.0, 0.0
+    lat_rad = math.radians(lat)
+    origin_lat_rad = math.radians(LONDON_GRID_ORIGIN_LAT)
+    dlat = lat_rad - origin_lat_rad
+    dlon = math.radians(lon - LONDON_GRID_ORIGIN_LON)
+    x = dlon * math.cos(origin_lat_rad) * earth_radius
+    y = dlat * earth_radius
+    return x, y
+
+
+def _line_grid_latlon_from_xy_meters(x_meters, y_meters):
+    earth_radius = 6371000.0
+    origin_lat_rad = math.radians(LONDON_GRID_ORIGIN_LAT)
+    lat = LONDON_GRID_ORIGIN_LAT + math.degrees(float(y_meters or 0.0) / earth_radius)
+    lon = LONDON_GRID_ORIGIN_LON + math.degrees(float(x_meters or 0.0) / (earth_radius * math.cos(origin_lat_rad)))
+    return round(lat, 6), round(lon, 6)
+
+
+def _line_grid_cell_key(latitude, longitude):
+    x_meters, y_meters = _line_grid_xy_meters(latitude, longitude)
+    if abs(x_meters) < 0.000001 and abs(y_meters) < 0.000001:
+        return "", 0, 0, 0.0, 0.0, 0.0, 0.0
+    x_index = int(round(x_meters / LINE_GRID_CELL_SIZE_METERS))
+    y_index = int(round(y_meters / LINE_GRID_CELL_SIZE_METERS))
+    center_x = float(x_index) * LINE_GRID_CELL_SIZE_METERS
+    center_y = float(y_index) * LINE_GRID_CELL_SIZE_METERS
+    center_lat, center_lon = _line_grid_latlon_from_xy_meters(center_x, center_y)
+    return (
+        "%s,%s" % (x_index, y_index),
+        x_index,
+        y_index,
+        round(center_x, 1),
+        round(center_y, 1),
+        center_lat,
+        center_lon,
+    )
 
 
 def _top_counter_item(counter):
@@ -1111,16 +1263,19 @@ def main():
     _write_json(DB_JSON_PATH, beacon_db)
     route_point_db = _update_route_point_db_incremental(_load_or_build_route_point_db(), payload)
     _write_json(ROUTE_POINT_DB_JSON_PATH, route_point_db)
+    line_grid_db = _update_line_grid_db_incremental(_load_or_build_line_grid_db(), payload)
+    _write_json(LINE_GRID_DB_JSON_PATH, line_grid_db)
     active_offer = _load_active_offer()
     route_stats = _update_route_db(active_offer, payload) if active_offer else {}
     elapsed = time.perf_counter() - started
     print(
-        "[traffic_beacon] saved traffic | %s | %s | db=%s | points=%s | route=%s | %.3fs"
+        "[traffic_beacon] saved traffic | %s | %s | db=%s | points=%s | grid=%s | route=%s | %.3fs"
         % (
             payload.get("postcode") or payload.get("outcode") or "no_postcode",
             payload.get("timestamp") or "",
             beacon_db.get("total_entries") or 0,
             route_point_db.get("total_points") or 0,
+            line_grid_db.get("total_cells") or 0,
             route_stats.get("route_key") or "none",
             elapsed,
         )

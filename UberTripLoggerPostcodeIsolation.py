@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-notify-hard-revert-v48
+# version: 2026-06-27-route-line-grid-shadow-v50
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-notify-hard-revert-v48"
+SCRIPT_BUILD = "2026-06-27-route-line-grid-shadow-v50"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1085,6 +1085,7 @@ DEBUG_DATA_DIR = os.path.join(DATA_ROOT_DIR, "debug")
 TRAFFIC_BEACON_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
 TRAFFIC_ROUTE_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
 TRAFFIC_ROUTE_POINT_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-route-points.json")
+TRAFFIC_LINE_GRID_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-line-grid.json")
 ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
 TEXT_LOG_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
 LEDGER_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
@@ -1133,6 +1134,11 @@ _TRAFFIC_BEACON_DB_CACHE = {
 }
 
 _ROUTE_POINT_DB_CACHE = {
+    "mtime": None,
+    "payload": None,
+}
+
+_LINE_GRID_DB_CACHE = {
     "mtime": None,
     "payload": None,
 }
@@ -1614,6 +1620,9 @@ ROUTE_LINE_EXACT_METERS = 120.0
 ROUTE_LINE_NEAR_METERS = 250.0
 ROUTE_LINE_RED_SCORE_MIN = 5.0
 ROUTE_LINE_AMBER_SCORE_MIN = 2.5
+LINE_GRID_CELL_SIZE_METERS = 180.0
+LONDON_GRID_ORIGIN_LAT = 51.5074
+LONDON_GRID_ORIGIN_LON = -0.1278
 
 
 def _load_traffic_beacon_db():
@@ -1668,6 +1677,21 @@ def _load_traffic_beacon_points():
     _ROUTE_POINT_DB_CACHE["payload"] = payload
     points = payload.get("points") or []
     return points if isinstance(points, list) else []
+
+
+def _load_traffic_line_grid_db():
+    if not os.path.exists(TRAFFIC_LINE_GRID_DB_PATH):
+        return {}
+    try:
+        mtime = os.path.getmtime(TRAFFIC_LINE_GRID_DB_PATH)
+    except Exception:
+        return {}
+    if _LINE_GRID_DB_CACHE.get("mtime") == mtime and isinstance(_LINE_GRID_DB_CACHE.get("payload"), dict):
+        return _LINE_GRID_DB_CACHE.get("payload") or {}
+    payload = _load_json_dict(TRAFFIC_LINE_GRID_DB_PATH)
+    _LINE_GRID_DB_CACHE["mtime"] = mtime
+    _LINE_GRID_DB_CACHE["payload"] = payload
+    return payload
 
 
 def _parse_outcode_family(outcode):
@@ -2032,6 +2056,48 @@ def _distance_point_to_segment_meters(point_lat, point_lon, start_lat, start_lon
     return math.hypot(px - cx, py - cy), t_clamped
 
 
+def _line_grid_xy_meters(latitude, longitude):
+    earth_radius = 6371000.0
+    lat = _safe_float(latitude, 0.0)
+    lon = _safe_float(longitude, 0.0)
+    if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+        return 0.0, 0.0
+    lat_rad = math.radians(lat)
+    origin_lat_rad = math.radians(LONDON_GRID_ORIGIN_LAT)
+    dlat = lat_rad - origin_lat_rad
+    dlon = math.radians(lon - LONDON_GRID_ORIGIN_LON)
+    x = dlon * math.cos(origin_lat_rad) * earth_radius
+    y = dlat * earth_radius
+    return x, y
+
+
+def _route_line_candidate_grid_keys(pickup_endpoint, dropoff_endpoint, cell_size_m, corridor_radius_m):
+    x1, y1 = _line_grid_xy_meters(pickup_endpoint.get("lat"), pickup_endpoint.get("lon"))
+    x2, y2 = _line_grid_xy_meters(dropoff_endpoint.get("lat"), dropoff_endpoint.get("lon"))
+    route_length_m = math.hypot(x2 - x1, y2 - y1)
+    if route_length_m <= 0.0001:
+        return [], route_length_m
+    sample_step_m = max(40.0, float(cell_size_m or LINE_GRID_CELL_SIZE_METERS) * 0.5)
+    steps = max(1, int(math.ceil(route_length_m / sample_step_m)))
+    cell_reach = max(1, int(math.ceil(float(corridor_radius_m or 0.0) / max(float(cell_size_m or 1.0), 1.0))))
+    keys = set()
+    for index in range(steps + 1):
+        progress = float(index) / float(steps)
+        sample_x = x1 + (x2 - x1) * progress
+        sample_y = y1 + (y2 - y1) * progress
+        base_x = int(round(sample_x / float(cell_size_m or LINE_GRID_CELL_SIZE_METERS)))
+        base_y = int(round(sample_y / float(cell_size_m or LINE_GRID_CELL_SIZE_METERS)))
+        for dx in range(-cell_reach, cell_reach + 1):
+            for dy in range(-cell_reach, cell_reach + 1):
+                ix = base_x + dx
+                iy = base_y + dy
+                center_x = float(ix) * float(cell_size_m or LINE_GRID_CELL_SIZE_METERS)
+                center_y = float(iy) * float(cell_size_m or LINE_GRID_CELL_SIZE_METERS)
+                if math.hypot(center_x - sample_x, center_y - sample_y) <= float(corridor_radius_m or 0.0) + float(cell_size_m or LINE_GRID_CELL_SIZE_METERS):
+                    keys.add("%s,%s" % (ix, iy))
+    return sorted(keys), route_length_m
+
+
 def _resolve_beacon_centroid(parsed, prefix, beacon_db):
     sector = ("%s" % ((parsed or {}).get("%s_sector" % prefix) or "")).strip().upper()
     outcode = ("%s" % ((parsed or {}).get("%s_outcode" % prefix) or "")).strip().upper()
@@ -2154,11 +2220,14 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
         "enabled": True,
         "matched": False,
         "source": "beacon_line_shadow",
-        "model": "centroid_segment_v1",
+        "model": "line_grid_v2",
         "time_bucket": _traffic_time_bucket(now_dt),
         "pickup_endpoint": {},
         "dropoff_endpoint": {},
         "route_length_m": 0.0,
+        "candidate_cells": 0,
+        "matched_cells": 0,
+        "cell_size_m": 0.0,
         "exact_hits": 0,
         "near_hits": 0,
         "time_bucket_hits": 0,
@@ -2188,18 +2257,21 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
     if not pickup_endpoint.get("resolved") or not dropoff_endpoint.get("resolved"):
         return payload
 
-    route_length_m, _ = _distance_point_to_segment_meters(
-        dropoff_endpoint["lat"],
-        dropoff_endpoint["lon"],
-        pickup_endpoint["lat"],
-        pickup_endpoint["lon"],
-        dropoff_endpoint["lat"],
-        dropoff_endpoint["lon"],
+    line_grid_db = _load_traffic_line_grid_db()
+    cells = line_grid_db.get("cells") or {}
+    if not isinstance(cells, dict) or not cells:
+        return payload
+    cell_size_m = float(line_grid_db.get("cell_size_m") or LINE_GRID_CELL_SIZE_METERS)
+    payload["cell_size_m"] = round(cell_size_m, 1)
+    candidate_keys, route_length_m = _route_line_candidate_grid_keys(
+        pickup_endpoint,
+        dropoff_endpoint,
+        cell_size_m,
+        ROUTE_LINE_NEAR_METERS,
     )
     payload["route_length_m"] = round(route_length_m, 1)
-
-    beacon_points = _load_traffic_beacon_points()
-    if not beacon_points:
+    payload["candidate_cells"] = len(candidate_keys)
+    if not candidate_keys:
         return payload
 
     exact_hits = 0
@@ -2221,9 +2293,12 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
     best_weekday_relevance = ""
     best_weekday_multiplier = 0.0
 
-    for entry in beacon_points:
-        lat = _safe_float(entry.get("lat"), 0.0)
-        lon = _safe_float(entry.get("lon"), 0.0)
+    for cell_key in candidate_keys:
+        entry = cells.get(cell_key) or {}
+        if not isinstance(entry, dict) or not entry:
+            continue
+        lat = _safe_float(entry.get("center_lat"), 0.0)
+        lon = _safe_float(entry.get("center_lon"), 0.0)
         if abs(lat) < 0.000001 and abs(lon) < 0.000001:
             continue
         distance_m, progress = _distance_point_to_segment_meters(
@@ -2236,49 +2311,68 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
         )
         if distance_m > ROUTE_LINE_NEAR_METERS:
             continue
+        weighted = _weighted_fine_bucket_metrics(entry, now_dt)
+        if not weighted.get("matched_buckets"):
+            coarse_leaf = _bucket_time_leaf(entry, offer_bucket)
+            coarse_metrics = _leaf_weighted_time_metrics(coarse_leaf, now_dt) if coarse_leaf else {}
+            weighted = {
+                "score": float(coarse_metrics.get("score") or 0.0),
+                "samples": float(coarse_metrics.get("samples") or 0.0),
+                "confidence": coarse_metrics.get("confidence") or "low",
+                "last_seen": coarse_metrics.get("last_seen") or "",
+                "matched_buckets": [offer_bucket] if coarse_leaf else [],
+                "distinct_days": int(coarse_metrics.get("distinct_days") or 0),
+                "day_keys": coarse_metrics.get("day_keys") or [],
+                "same_weekday_days": int(coarse_metrics.get("same_weekday_days") or 0),
+                "same_weekpart_days": int(coarse_metrics.get("same_weekpart_days") or 0),
+                "weekday_relevance": coarse_metrics.get("weekday_relevance") or "",
+                "weekday_multiplier": float(coarse_metrics.get("weekday_multiplier") or 0.0),
+            }
+        signal_score = max(0.0, float(weighted.get("score") or 0.0))
+        if signal_score <= 0.0 and float(entry.get("net_score") or 0.0) <= 0.0:
+            continue
+        payload["matched_cells"] = int(payload.get("matched_cells") or 0) + 1
         if distance_m <= ROUTE_LINE_EXACT_METERS:
             exact_hits += 1
         else:
             near_hits += 1
-        beacon_dt = _parse_local_timestamp(entry.get("timestamp") or "")
-        beacon_bucket = _traffic_time_bucket(beacon_dt or now_dt)
-        if beacon_bucket == offer_bucket:
+        matched_buckets = weighted.get("matched_buckets") or []
+        if matched_buckets:
             time_hits += 1
-        if beacon_dt is not None:
-            beacon_fine_bucket = _fine_bucket_key(beacon_dt)
-            if beacon_fine_bucket == offer_primary_fine_bucket:
-                matched_fine_buckets.add(beacon_fine_bucket)
-            elif beacon_fine_bucket in offer_neighbor_fine_buckets:
-                adjacent_fine_buckets.add(beacon_fine_bucket)
-            relevance = _leaf_weekday_relevance({"days_seen": {beacon_dt.strftime("%Y-%m-%d"): 1}}, now_dt)
-            same_weekday_days = int(relevance.get("same_weekday_days") or 0)
-            same_weekpart_days = int(relevance.get("same_weekpart_days") or 0)
-            weekday_multiplier = float(relevance.get("multiplier") or 0.0)
-            if same_weekday_days > best_same_weekday_days:
-                best_same_weekday_days = same_weekday_days
-            if same_weekpart_days > best_same_weekpart_days:
-                best_same_weekpart_days = same_weekpart_days
-            if weekday_multiplier > best_weekday_multiplier:
-                best_weekday_multiplier = weekday_multiplier
-                best_weekday_relevance = relevance.get("label") or ""
-        else:
-            weekday_multiplier = 0.45
-        hit_weight = _route_line_hit_weight(beacon_dt, now_dt, distance_m)
-        if hit_weight["bucket_match"]:
+        if offer_primary_fine_bucket and offer_primary_fine_bucket in matched_buckets:
+            matched_fine_buckets.add(offer_primary_fine_bucket)
             strong_time_hits += 1
-        trap_score += float(hit_weight["score"]) * float(weekday_multiplier)
-        outcode = ("%s" % (entry.get("outcode") or "")).strip().upper()
-        sector = ("%s" % (entry.get("sector") or "")).strip().upper()
-        if outcode:
-            outcode_counts[outcode] = int(outcode_counts.get(outcode) or 0) + 1
-        if sector:
-            sector_counts[sector] = int(sector_counts.get(sector) or 0) + 1
+        for candidate_bucket in matched_buckets:
+            if candidate_bucket == offer_primary_fine_bucket:
+                continue
+            if candidate_bucket in offer_neighbor_fine_buckets:
+                adjacent_fine_buckets.add(candidate_bucket)
+        same_weekday_days = int(weighted.get("same_weekday_days") or 0)
+        same_weekpart_days = int(weighted.get("same_weekpart_days") or 0)
+        weekday_multiplier = float(weighted.get("weekday_multiplier") or 0.0)
+        if same_weekday_days > best_same_weekday_days:
+            best_same_weekday_days = same_weekday_days
+        if same_weekpart_days > best_same_weekpart_days:
+            best_same_weekpart_days = same_weekpart_days
+        if weekday_multiplier > best_weekday_multiplier:
+            best_weekday_multiplier = weekday_multiplier
+            best_weekday_relevance = weighted.get("weekday_relevance") or ""
+        trap_score += signal_score * (1.25 if distance_m <= ROUTE_LINE_EXACT_METERS else 0.75)
+        for outcode, hits in (entry.get("beacon_outcodes") or {}).items():
+            normalized_outcode = ("%s" % (outcode or "")).strip().upper()
+            if normalized_outcode and int(hits or 0) > 0:
+                outcode_counts[normalized_outcode] = int(outcode_counts.get(normalized_outcode) or 0) + int(hits or 0)
+        for sector, hits in (entry.get("beacon_sectors") or {}).items():
+            normalized_sector = ("%s" % (sector or "")).strip().upper()
+            if normalized_sector and int(hits or 0) > 0:
+                sector_counts[normalized_sector] = int(sector_counts.get(normalized_sector) or 0) + int(hits or 0)
         hit = {
             "distance_m": round(distance_m, 1),
             "progress": round(progress, 3),
-            "outcode": outcode,
-            "sector": sector,
-            "timestamp": entry.get("timestamp") or "",
+            "cell": cell_key,
+            "outcode": next(iter(sorted((entry.get("beacon_outcodes") or {}).keys())), ""),
+            "sector": next(iter(sorted((entry.get("beacon_sectors") or {}).keys())), ""),
+            "timestamp": weighted.get("last_seen") or entry.get("last_seen") or "",
         }
         if closest_hit is None or hit["distance_m"] < closest_hit["distance_m"]:
             closest_hit = hit

@@ -1,19 +1,19 @@
 {
-  "updated_at": "2026-06-27 23:20:00",
-  "manifest_build": "2026-06-27-manifest-v43-notify-hard-revert",
+  "updated_at": "2026-06-27 23:55:00",
+  "manifest_build": "2026-06-27-manifest-v45-route-line-grid-shadow",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-27-notify-hard-revert-v48",
-      "script_build": "2026-06-27-notify-hard-revert-v48",
-      "bytes": 158504,
+      "version_comment": "2026-06-27-route-line-grid-shadow-v50",
+      "script_build": "2026-06-27-route-line-grid-shadow-v50",
+      "bytes": 165910,
       "content_sha1": ""
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
-      "version_comment": "2026-06-27-traffic-beacon-centroid-route-v17",
+      "version_comment": "2026-06-27-traffic-line-grid-builder-v18",
       "script_build": "",
-      "bytes": 43916,
+      "bytes": 49997,
       "content_sha1": ""
     },
     "update_from_github.py": {
