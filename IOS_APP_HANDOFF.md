@@ -157,6 +157,42 @@ Examples:
 - A route may land in a neutral area but still be bad if the corridor crosses multiple known trap beacons.
 - One beacon can be operationally important even before the database becomes statistically large.
 
+## Beacon Map Acceptance Logic
+
+This is the most important long-term decision layer.
+
+The app should not think only in terms of:
+
+- pickup postcode
+- dropoff postcode
+- destination family color
+
+It should think in terms of a route corridor crossing known driver-observed traffic mines.
+
+The practical model is:
+
+1. take pickup and dropoff
+2. build the route corridor between them
+3. intersect that corridor with stored beacon geometry
+4. weight the hits by time relevance
+5. decide whether the route itself is operationally toxic even if the endpoint looks acceptable
+
+This means beacon-map logic is not just for visualization. It is the future accept/decline spine.
+
+Desired operator-facing output is simple:
+
+- color emoji
+- count of route trap hits
+- short reason
+
+Examples:
+
+- `RED x4 route traps`
+- `AMBER x2 timed traps`
+- `GREEN x0`
+
+This is more useful in the live decision window than a verbose zone label.
+
 ## Current Traffic Logic Model
 
 The live logic blends four sources:
@@ -291,7 +327,9 @@ The app should also learn passively:
 
 This should exist as a policy layer, for example:
 
+- decline if route trap count >= threshold
 - decline if route trap score >= threshold
+- decline if time-aligned route trap count >= threshold
 - decline if operator-blacklisted road is on route
 - decline if pay below adjusted target floor
 - decline if low rider rating and reliable extraction

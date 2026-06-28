@@ -269,6 +269,41 @@ This direction directly matches the parent OnisAI route-tracking plan, which alr
 
 The current Pythonista beacon system should therefore be treated as the lightweight operational precursor to the full native corridor engine, not as a dead-end approximation.
 
+## Beacon-Map-First Acceptance Policy
+
+Later acceptance logic should be anchored on beacon-map corridor evidence first, and endpoint color second.
+
+Why:
+
+- a clean-looking dropoff can still be bad if the route crosses multiple trap corridors
+- one repeated beacon at the right time can poison an otherwise attractive trip
+- the driver only has a few seconds, so the decision output must compress route danger into a fast signal
+
+Target live computation:
+
+1. build route from pickup to dropoff
+2. widen into a practical driving corridor
+3. count exact and near beacon intersections
+4. weight by:
+   - same 15-minute window
+   - same weekday
+   - same weekpart
+   - beacon density
+   - operator blacklist matches
+5. produce:
+   - route trap count
+   - timed trap count
+   - weighted route score
+   - short route reason
+
+Target compact output:
+
+- `RED x4`
+- `AMBER x2`
+- `GREEN x0`
+
+The route hit count should become the fastest operator-facing shorthand, while the weighted score stays as the deeper internal signal.
+
 ## Decision Engine
 
 The decision engine should be explicit and auditable.
@@ -297,8 +332,18 @@ The decision engine should be explicit and auditable.
 - destination sector
 - route trap count
 - route trap score
+- timed route trap count
 - blacklisted road hit
 - operator exceptions
+
+Recommended precedence:
+
+1. operator blacklist roads
+2. route corridor beacon logic
+3. destination zone logic
+4. pay/rating secondary filters
+
+That ordering reflects the actual field problem: bad routes often matter more than superficially good endpoints.
 
 ## Operator Override System
 
