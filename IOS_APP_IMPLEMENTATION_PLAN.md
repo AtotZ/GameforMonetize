@@ -383,6 +383,10 @@ This also matches the parent native tracker direction:
 
 That native tracker foundation should be reused instead of reinvented.
 
+Detailed lifecycle and inference rules live in:
+
+- `IOS_TRIP_STATE_MACHINE.md`
+
 ## Automation Plan
 
 ### Phase A: assistive
