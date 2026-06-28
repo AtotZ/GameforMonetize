@@ -116,6 +116,7 @@ Core entities:
 Detailed schema and entity design live in:
 
 - `IOS_NATIVE_DATA_MODEL.md`
+- `IOS_SWIFTDATA_MODEL_SKELETON.swift`
 
 ## Data Model
 
@@ -230,6 +231,10 @@ The app should maintain:
 
 ## Route Corridor Engine
 
+Detailed contract:
+
+- `IOS_ROUTE_CORRIDOR_ENGINE_CONTRACT.md`
+
 This is the key differentiator.
 
 ### Problem
@@ -310,6 +315,10 @@ Target compact output:
 The route hit count should become the fastest operator-facing shorthand, while the weighted score stays as the deeper internal signal.
 
 ## Decision Engine
+
+Detailed contract:
+
+- `IOS_DECISION_ENGINE_CONTRACT.md`
 
 The decision engine should be explicit and auditable.
 
