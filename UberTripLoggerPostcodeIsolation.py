@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-notify-route-beacon-count-v44
+# version: 2026-06-27-notify-before-open-uber-v45
 import hashlib
 import json
 import os
@@ -1049,8 +1049,9 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-notify-route-beacon-count-v44"
+SCRIPT_BUILD = "2026-06-27-notify-before-open-uber-v45"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
+NOTIFICATION_FLUSH_SECONDS = 0.35
 
 t_global_start = time.perf_counter()
 RUNTIME_STDOUT_ENABLED = False
@@ -1292,8 +1293,6 @@ def _send_push_notification(title, body):
     if ObjCClass is None:
         return False
     try:
-        _open_uber_driver_app()
-
         UNUserNotificationCenter = ObjCClass("UNUserNotificationCenter")
         UNMutableNotificationContent = ObjCClass("UNMutableNotificationContent")
         UNNotificationRequest = ObjCClass("UNNotificationRequest")
@@ -1311,6 +1310,8 @@ def _send_push_notification(title, body):
             "TripLoggerLocalNotif", content, trigger
         )
         center.addNotificationRequest_withCompletionHandler_(request, None)
+        time.sleep(NOTIFICATION_FLUSH_SECONDS)
+        _open_uber_driver_app()
         return True
     except Exception as exc:
         _runtime_print("[notif] failed: %s" % exc)
