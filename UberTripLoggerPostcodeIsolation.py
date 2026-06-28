@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-27-route-score-reverted-notify-v43
+# version: 2026-06-27-notify-route-beacon-count-v44
 import hashlib
 import json
 import os
@@ -1049,7 +1049,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-27-route-score-reverted-notify-v43"
+SCRIPT_BUILD = "2026-06-27-notify-route-beacon-count-v44"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -2730,6 +2730,22 @@ def _compact_route_score_label(route_line_shadow):
     return "R%s" % display_score
 
 
+def _compact_route_beacon_count(route_line_shadow):
+    shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
+    exact_hits = int(shadow.get("exact_hits") or 0)
+    near_hits = int(shadow.get("near_hits") or 0)
+    return max(0, exact_hits + near_hits)
+
+
+def _compact_traffic_notification_token(traffic_verdict, route_line_shadow):
+    verdict = traffic_verdict if isinstance(traffic_verdict, dict) else {}
+    beacon_count = _compact_route_beacon_count(route_line_shadow)
+    return "%s B%s" % (
+        verdict.get("emoji") or "\u26aa",
+        beacon_count,
+    )
+
+
 def _merge_route_line_verdict(base_verdict, route_verdict):
     if not route_verdict:
         return base_verdict
@@ -3526,7 +3542,9 @@ def main():
     debug = parse_result.get("debug") or {}
     metrics = _derive_offer_metrics(parsed)
     now = datetime.datetime.now()
-    traffic_verdict = _traffic_zone_verdict(parsed, now)
+    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
+    traffic_verdict = _traffic_zone_verdict(parsed, now, route_line_shadow)
+    route_line_audit = _route_line_audit_summary(route_line_shadow, traffic_verdict)
     route_shadow = _route_shadow_snapshot(parsed, now)
     low_rating_decision = _low_rating_decision(parsed, debug)
 
@@ -3540,8 +3558,7 @@ def main():
             LOW_RATING_DECLINE_THRESHOLD,
         )
     else:
-        traffic_label_compact = _compact_traffic_title_label(parsed, traffic_verdict)
-        traffic_compact = "%s %s" % (traffic_verdict["emoji"], traffic_label_compact)
+        traffic_compact = _compact_traffic_notification_token(traffic_verdict, route_line_shadow)
         title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s \u00b7 %s" % (
             parsed["rating"] if parsed["rating"] else 0.0,
             parsed["price"],
@@ -3561,12 +3578,18 @@ def main():
         route_direction_summary = ("%s" % (route_shadow.get("direction_summary") or "")).strip()
         if route_direction_summary:
             body_lines.append("Route Shadow %s" % route_direction_summary)
+        route_line_hits = _compact_route_beacon_count(route_line_shadow)
+        if route_line_hits > 0:
+            body_lines.append(
+                "Route Line B%s | exact %s | near %s"
+                % (
+                    route_line_hits,
+                    int(route_line_shadow.get("exact_hits") or 0),
+                    int(route_line_shadow.get("near_hits") or 0),
+                )
+            )
         body_text = "\n".join(body_lines)
     _send_push_notification(title_line, body_text)
-
-    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
-    traffic_verdict = _traffic_zone_verdict(parsed, now, route_line_shadow)
-    route_line_audit = _route_line_audit_summary(route_line_shadow, traffic_verdict)
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
