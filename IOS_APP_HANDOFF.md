@@ -32,6 +32,35 @@ The driver's real problem is not only destination risk. Many trips look acceptab
 - time-of-day traffic evidence
 - personal operator overrides
 
+## OnisAI Parent Architecture
+
+This project is not a greenfield idea. The parent product architecture already exists in `onisai-repo-min` and should be treated as the upstream design reference for the native app.
+
+Primary parent references:
+
+- `onisai-repo-min/docs/gps-route-tracking-plan.md`
+- `onisai-repo-min/native/ios/OnisAINativeTracker/README.md`
+- `onisai-repo-min/docs/360_PIPELINE_AUDIT_2026-03-22.md`
+- `onisai-repo-min/ONE_TAP_SHORTCUT_SETUP.md`
+
+What those parent docs establish:
+
+- offer scan owns route truth:
+  - pickup address
+  - dropoff address
+  - upfront fare
+  - estimated minutes and miles
+  - product type
+- end-shift or later evidence owns final outcome truth:
+  - final fare
+  - tip
+  - actual minutes and miles
+- AI and traffic layers are derived evidence, not truth writers
+- route geometry matters more than endpoint-only scoring
+- a native iOS tracker foundation already exists for GPS ownership, local state, motion/location wrappers, and shortcut handoff
+
+This means the Pythonista system should be understood as a field-validated branch of the same architecture, not as a separate product.
+
 ## Current Live System
 
 The live deployed workflow is Pythonista + iOS Shortcuts + GitHub self-update.
@@ -226,6 +255,13 @@ The native iOS app should replace the Shortcut/Pythonista runtime with a real ar
 - `NotificationPresenter`
 - `MapReviewUI`
 - `OperatorOverrides`
+
+The native cutover should follow the same sequence already described by the parent OnisAI native tracker notes:
+
+1. keep the working live flow stable
+2. point the future native shell at the native tracker foundation
+3. move GPS ownership and screenshot ingest into native
+4. retire the older runtime only after native behavior proves stable
 
 ## Automation End-State
 

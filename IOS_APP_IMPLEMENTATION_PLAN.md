@@ -49,6 +49,24 @@ where platform access and deployment model allow it.
 - native telemetry and capture services
 - internal model engine
 
+## OnisAI Upstream
+
+This native build plan should inherit from the parent OnisAI architecture already documented in:
+
+- `onisai-repo-min/docs/gps-route-tracking-plan.md`
+- `onisai-repo-min/native/ios/OnisAINativeTracker/README.md`
+- `onisai-repo-min/docs/360_PIPELINE_AUDIT_2026-03-22.md`
+- `onisai-repo-min/ONE_TAP_SHORTCUT_SETUP.md`
+
+Those files already prove four important design decisions:
+
+1. offer OCR is the route-truth writer
+2. final outcome truth must not rewrite route truth
+3. route progress and corridor geometry are first-class, not optional extras
+4. native iOS tracker ownership was already the intended long-term destination
+
+So this plan is a continuation and productization of that architecture, using the Pythonista system as live field evidence.
+
 ## Architecture
 
 ### App layers
@@ -243,6 +261,14 @@ Use real geometry and routing if possible:
 
 This is better than a naive straight line.
 
+This direction directly matches the parent OnisAI route-tracking plan, which already proposed:
+
+- pickup-to-dropoff route calculation
+- progress along the route, not radius-only arrival
+- route snapping and route-aware state transitions
+
+The current Pythonista beacon system should therefore be treated as the lightweight operational precursor to the full native corridor engine, not as a dead-end approximation.
+
 ## Decision Engine
 
 The decision engine should be explicit and auditable.
@@ -302,6 +328,15 @@ Target behavior:
 - confirm completed trip when subsequent movement and stop pattern fit dropoff
 
 This is a later native feature and should not block the initial build.
+
+This also matches the parent native tracker direction:
+
+- local tracker state
+- breadcrumb capture
+- shift sessions
+- transition proposals
+
+That native tracker foundation should be reused instead of reinvented.
 
 ## Automation Plan
 
@@ -401,6 +436,7 @@ Example compact UI:
 4. Port beacon DB structures and route-line math.
 5. Rebuild the live offer notification UI natively.
 6. Add a map showing beacon points and blacklisted corridors.
+7. Reuse the parent OnisAI native tracker package as the GPS/state ownership base rather than designing a second tracker from scratch.
 
 ## Pythonista Reference Rules
 
