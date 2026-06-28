@@ -1,12 +1,12 @@
 {
-  "updated_at": "2026-06-27 23:05:00",
-  "manifest_build": "2026-06-27-manifest-v42-notify-working-restore",
+  "updated_at": "2026-06-27 23:20:00",
+  "manifest_build": "2026-06-27-manifest-v43-notify-hard-revert",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-27-notify-working-restore-v47",
-      "script_build": "2026-06-27-notify-working-restore-v47",
-      "bytes": 159602,
+      "version_comment": "2026-06-27-notify-hard-revert-v48",
+      "script_build": "2026-06-27-notify-hard-revert-v48",
+      "bytes": 158504,
       "content_sha1": ""
     },
     "traffic_beacon.py": {
