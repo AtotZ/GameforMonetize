@@ -2,7 +2,7 @@ import base64
 import datetime
 import glob
 import hashlib
-# version: 2026-06-27-private-data-upload-line-grid-v17
+# version: 2026-06-29-private-data-upload-daily-logs-v18
 import json
 import os
 import re
@@ -18,7 +18,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-27-private-upload-line-grid-v17"
+SCRIPT_BUILD = "2026-06-29-private-upload-daily-logs-v18"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 8
 REQUEST_RETRY_ATTEMPTS = 2
@@ -83,13 +83,13 @@ DEFAULT_FILE_SPECS = [
     },
     {
         "label": "saved_trip_ledger",
-        "local_rel_path": "TestSubjextData/logs/TripLog-OnisAI-PostcodeIsolation.jsonl",
-        "remote_rel_path": "logs/TripLog-OnisAI-PostcodeIsolation.jsonl",
+        "local_rel_glob": "TestSubjextData/logs/history/*-TripLog-OnisAI-PostcodeIsolation.jsonl",
+        "remote_rel_dir": "logs/history",
     },
     {
         "label": "saved_trip_log",
-        "local_rel_path": "TestSubjextData/logs/TripLog-OnisAI-PostcodeIsolation.txt",
-        "remote_rel_path": "logs/TripLog-OnisAI-PostcodeIsolation.txt",
+        "local_rel_glob": "TestSubjextData/logs/history/*-TripLog-OnisAI-PostcodeIsolation.txt",
+        "remote_rel_dir": "logs/history",
     },
     {
         "label": "traffic_latest",
@@ -395,6 +395,14 @@ def _copy_file_spec(item):
     return {key: value for key, value in (item or {}).items()}
 
 
+def _default_file_spec_by_label(label):
+    wanted = ("%s" % (label or "")).strip()
+    for item in DEFAULT_FILE_SPECS:
+        if ("%s" % (item.get("label") or "")).strip() == wanted:
+            return _copy_file_spec(item)
+    return {}
+
+
 def _normalize_file_specs(file_specs):
     normalized = []
     seen_labels = set()
@@ -402,8 +410,15 @@ def _normalize_file_specs(file_specs):
         if not isinstance(item, dict):
             continue
         candidate = _copy_file_spec(item)
+        label = ("%s" % (candidate.get("label") or "")).strip()
         local_path = _normalize_rel_path(candidate.get("local_rel_path") or "")
         remote_path = _normalize_rel_path(candidate.get("remote_rel_path") or "")
+        if label in ("saved_trip_ledger", "saved_trip_log"):
+            default_candidate = _default_file_spec_by_label(label)
+            if default_candidate:
+                candidate = default_candidate
+                local_path = _normalize_rel_path(candidate.get("local_rel_path") or "")
+                remote_path = _normalize_rel_path(candidate.get("remote_rel_path") or "")
         if local_path in (
             "TestSubjextData/offers/active_offer_history.jsonl",
             "TestSubjextData/traffic/TrafficBeacon-history.json",
@@ -415,7 +430,6 @@ def _normalize_file_specs(file_specs):
         ):
             continue
         normalized.append(candidate)
-        label = ("%s" % (candidate.get("label") or "")).strip()
         if label:
             seen_labels.add(label)
     for item in DEFAULT_FILE_SPECS:

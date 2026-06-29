@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-28-route-line-grid-post-notify-v54
+# version: 2026-06-29-argv-fast-daily-ledger-v55
 import hashlib
 import json
 import os
@@ -1128,7 +1128,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-28-route-line-grid-post-notify-v54"
+SCRIPT_BUILD = "2026-06-29-argv-fast-daily-ledger-v55"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1160,6 +1160,7 @@ TRAFFIC_HISTORY_DIR = os.path.join(TRAFFIC_DATA_DIR, "history")
 OFFERS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "offers")
 OFFERS_HISTORY_DIR = os.path.join(OFFERS_DATA_DIR, "history")
 LOGS_DATA_DIR = os.path.join(DATA_ROOT_DIR, "logs")
+LOGS_HISTORY_DIR = os.path.join(LOGS_DATA_DIR, "history")
 DEBUG_DATA_DIR = os.path.join(DATA_ROOT_DIR, "debug")
 TRAFFIC_BEACON_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-db.json")
 TRAFFIC_ROUTE_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
@@ -1178,6 +1179,8 @@ SHORTCUT_INPUT_SCRIPT_DIR_NESTED_PATH = os.path.join(
 SHORTCUT_INPUT_FALLBACK_PATH = os.path.expanduser("~/shortcut_offer_text.txt")
 SHORTCUT_INPUT_WAIT_SECONDS = 4.0
 SHORTCUT_INPUT_POLL_SECONDS = 0.10
+ENABLE_SHORTCUT_FILE_FALLBACK = False
+ENABLE_PHOTO_OCR_FALLBACK = False
 
 GOOD_HOURLY_MIN = 28.0
 BAD_HOURLY_MAX = 22.0
@@ -1306,6 +1309,11 @@ def _append_text(path, text):
 def _daily_jsonl_path(base_dir, stem, day_text):
     day = ("%s" % (day_text or "")).strip() or datetime.datetime.now().strftime("%Y-%m-%d")
     return os.path.join(base_dir, "%s-%s.jsonl" % (day, stem))
+
+
+def _daily_text_path(base_dir, stem, day_text):
+    day = ("%s" % (day_text or "")).strip() or datetime.datetime.now().strftime("%Y-%m-%d")
+    return os.path.join(base_dir, "%s-%s.txt" % (day, stem))
 
 
 def _write_active_offer(
@@ -3630,7 +3638,7 @@ def main():
             pass
         fetch_finished = time.perf_counter()
         convert_finished = fetch_finished
-    else:
+    elif ENABLE_PHOTO_OCR_FALLBACK:
         _wait_for_fresh_latest_asset(state, poll_interval_s=0.08, timeout_s=3.0)
         latest_asset, preselected_ocr_bundle, preselected_score = _select_best_recent_offer_asset(state)
         fetch_finished = time.perf_counter()
@@ -3649,6 +3657,8 @@ def main():
         convert_finished = time.perf_counter()
         selected_asset_id = getattr(latest_asset, "local_id", None)
         selected_asset_created = _created_str(getattr(latest_asset, "creation_date", None))
+    else:
+        _runtime_print("[guard] No Shortcut argument text available and photo fallback is disabled.")
 
     ocr_text = ""
     ocr_time = 0.0
@@ -3780,8 +3790,10 @@ def main():
     route_line_audit = _route_line_audit_summary(route_line_shadow, traffic_verdict)
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    daily_text_log_path = _daily_text_path(LOGS_HISTORY_DIR, "TripLog-OnisAI-PostcodeIsolation", today_date)
+    daily_ledger_path = _daily_jsonl_path(LOGS_HISTORY_DIR, "TripLog-OnisAI-PostcodeIsolation", today_date)
 
-    totals_before_append = _get_today_totals_cached(state, LEDGER_PATH, today_date)
+    totals_before_append = _get_today_totals_cached(state, daily_ledger_path, today_date)
     trip_number = totals_before_append["trip_count"] + 1
     trip_label = "TRIP %d" % trip_number
     heading = "==== %s ====\n" % now.strftime("%A, %d %B %Y")
@@ -3863,9 +3875,9 @@ def main():
     if totals_before_append["trip_count"] == 0:
         block = "\n%s%s" % (heading, block)
 
-    _append_text(TEXT_LOG_PATH, block)
+    _append_text(daily_text_log_path, block)
 
-    _append_jsonl(LEDGER_PATH, ledger_record)
+    _append_jsonl(daily_ledger_path, ledger_record)
     totals_after_append = _totals_after_append(totals_before_append, ledger_record)
 
     latest_payload = {
@@ -4002,6 +4014,15 @@ def _read_shortcut_offer_input():
     argv_payload = _consume_shortcut_offer_text_argv()
     if argv_payload and argv_payload.get("text"):
         return argv_payload["text"], "argv", argv_payload
+    if not ENABLE_SHORTCUT_FILE_FALLBACK:
+        return "", "", {
+            "tag": "ARGV",
+            "path": "",
+            "bytes": 0,
+            "exists": False,
+            "looks_like_offer": False,
+            "invalid_reason": "argv_missing",
+        }
     file_payload = _consume_shortcut_offer_text_file()
     if file_payload and file_payload.get("text"):
         return file_payload["text"], "file", file_payload
