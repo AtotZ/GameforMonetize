@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-06-29 09:31:45",
-  "manifest_build": "2026-06-29-manifest-v53-argv-fast-daily-ledger",
+  "updated_at": "2026-06-29 09:56:39",
+  "manifest_build": "2026-06-29-manifest-v54-safe-address-cleanup",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-29-argv-fast-daily-ledger-v55",
-      "script_build": "2026-06-29-argv-fast-daily-ledger-v55",
-      "bytes": 170951,
-      "content_sha1": "eaf2e44bb7ff373f831feb04fe667b1dd397c6b8"
+      "version_comment": "2026-06-29-safe-address-cleanup-v56",
+      "script_build": "2026-06-29-safe-address-cleanup-v56",
+      "bytes": 171354,
+      "content_sha1": "f4864fbf0bb80de85c8744fda198c40028a5e6f7"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",

@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-29-argv-fast-daily-ledger-v55
+# version: 2026-06-29-safe-address-cleanup-v56
 import hashlib
 import json
 import os
@@ -151,6 +151,7 @@ if True:
         "\u0415": "E",  # Cyrillic Ie
         "\u041d": "H",  # Cyrillic En
         "\u0406": "I",  # Cyrillic Byelorussian/Ukrainian I
+        "\u0418": "N",  # Cyrillic I used as postcode N
         "\u041a": "K",  # Cyrillic Ka
         "\u041c": "M",  # Cyrillic Em
         "\u041e": "O",  # Cyrillic O
@@ -164,6 +165,7 @@ if True:
         "\u0435": "E",
         "\u043d": "H",
         "\u0456": "I",
+        "\u0438": "N",
         "\u043a": "K",
         "\u043c": "M",
         "\u043e": "O",
@@ -380,6 +382,12 @@ if True:
             return text
         transliterated = _transliterate_postcode_confusables(text)
         transliterated = transliterated.replace("\u0417", "3")
+        transliterated = re.sub(
+            r"\bWCH\s*([0-9IOZLSQBG][A-Z]{2})\b",
+            lambda match: "WC2H %s" % ((_normalize_postcode_inward_token(match.group(1)) or match.group(1))),
+            transliterated,
+            flags=re.IGNORECASE,
+        )
 
         def replace(match):
             outward = _normalize_postcode_outward_token(match.group(1))
@@ -904,6 +912,7 @@ if True:
         line = re.sub(r"^[|lI]\s+", "", line)
         line = re.sub(r"\bPI\b", "Pl", line)
         line = re.sub(r"\bWIG\b", "W1G", line)
+        line = re.sub(r"\bRa(?=(?:,|\s+[A-Z]{1,2}\d|\s*$))", "Rd", line)
         line = _normalize_house_number_ocr(line)
         line = _normalize_address_postcode_text(line)
         line = _strip_invalid_single_letter_postcode_artifacts(line)
