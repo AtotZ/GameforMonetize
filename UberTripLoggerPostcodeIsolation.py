@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-30-failed-offer-history-v57
+# version: 2026-06-30-route-token-safe-v58
 import hashlib
 import json
 import os
@@ -1137,7 +1137,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-30-failed-offer-history-v57"
+SCRIPT_BUILD = "2026-06-30-route-token-safe-v58"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -2527,6 +2527,37 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
     return payload
 
 
+def _safe_route_line_shadow_snapshot(parsed, now_dt=None):
+    try:
+        return _route_line_shadow_snapshot(parsed, now_dt)
+    except Exception as exc:
+        _runtime_print("[route-line] shadow failed: %s" % exc)
+        return {
+            "enabled": False,
+            "matched": False,
+            "source": "beacon_line_shadow",
+            "model": "line_grid_v2",
+            "time_bucket": _traffic_time_bucket(now_dt or datetime.datetime.now()),
+            "exact_hits": 0,
+            "near_hits": 0,
+            "time_bucket_hits": 0,
+            "strong_time_hits": 0,
+            "unique_outcodes": 0,
+            "unique_sectors": 0,
+            "top_outcodes": [],
+            "top_sectors": [],
+            "closest_hit_m": 0.0,
+            "status_hint": "error",
+            "trap_score": 0.0,
+            "same_weekday_days": 0,
+            "same_weekpart_days": 0,
+            "weekday_relevance": "",
+            "weekday_multiplier": 0.0,
+            "matched_fine_buckets": [],
+            "adjacent_fine_buckets": [],
+        }
+
+
 def _route_shadow_snapshot(parsed, now_dt=None):
     now_dt = now_dt or datetime.datetime.now()
     pickup_outcode = ("%s" % (parsed.get("pickup_outcode") or "")).upper()
@@ -3793,8 +3824,10 @@ def main():
     debug = parse_result.get("debug") or {}
     metrics = _derive_offer_metrics(parsed)
     now = datetime.datetime.now()
-    traffic_verdict = _traffic_zone_verdict(parsed, now)
+    route_line_shadow = _safe_route_line_shadow_snapshot(parsed, now)
+    traffic_verdict = _traffic_zone_verdict(parsed, now, route_line_shadow)
     route_shadow = _route_shadow_snapshot(parsed, now)
+    route_line_audit = _route_line_audit_summary(route_line_shadow, traffic_verdict)
     low_rating_decision = _low_rating_decision(parsed, debug)
 
     if low_rating_decision["should_decline_low_rating"]:
@@ -3807,8 +3840,7 @@ def main():
             LOW_RATING_DECLINE_THRESHOLD,
         )
     else:
-        traffic_label_compact = _compact_traffic_title_label(parsed, traffic_verdict)
-        traffic_compact = "%s %s" % (traffic_verdict["emoji"], traffic_label_compact)
+        traffic_compact = _compact_traffic_notification_token(traffic_verdict, route_line_shadow)
         title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s \u00b7 %s" % (
             parsed["rating"] if parsed["rating"] else 0.0,
             parsed["price"],
@@ -3825,15 +3857,21 @@ def main():
             metrics["per_mile_card"],
         )
         body_lines = [body_line1, body_line2]
+        beacon_count = _compact_route_beacon_count(route_line_shadow)
+        if beacon_count > 0:
+            body_lines.append(
+                "Route Beacons B%s | exact %s | near %s"
+                % (
+                    beacon_count,
+                    route_line_audit.get("exact_hits", 0),
+                    route_line_audit.get("near_hits", 0),
+                )
+            )
         route_direction_summary = ("%s" % (route_shadow.get("direction_summary") or "")).strip()
         if route_direction_summary:
             body_lines.append("Route Shadow %s" % route_direction_summary)
         body_text = "\n".join(body_lines)
     _send_push_notification(title_line, body_text)
-
-    route_line_shadow = _route_line_shadow_snapshot(parsed, now)
-    traffic_verdict = _traffic_zone_verdict(parsed, now, route_line_shadow)
-    route_line_audit = _route_line_audit_summary(route_line_shadow, traffic_verdict)
     today_date = now.strftime("%Y-%m-%d")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
     daily_text_log_path = _daily_text_path(LOGS_HISTORY_DIR, "TripLog-OnisAI-PostcodeIsolation", today_date)

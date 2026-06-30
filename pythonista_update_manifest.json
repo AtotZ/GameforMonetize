@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-06-30 03:08:00",
-  "manifest_build": "2026-06-30-manifest-v59-updater-fallback",
+  "updated_at": "2026-06-30 03:20:00",
+  "manifest_build": "2026-06-30-manifest-v60-route-token-safe",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-30-failed-offer-history-v57",
-      "script_build": "2026-06-30-failed-offer-history-v57",
-      "bytes": 169254,
-      "content_sha1": "4d7b836a319e790e6803b069fde61bbdeb1ea61e"
+      "version_comment": "2026-06-30-route-token-safe-v58",
+      "script_build": "2026-06-30-route-token-safe-v58",
+      "bytes": 170570,
+      "content_sha1": "96513f8628ed9026ff39978119ac93195b1b9a73"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
