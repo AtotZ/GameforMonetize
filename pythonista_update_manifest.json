@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-06-30 01:58:53",
-  "manifest_build": "2026-06-30-manifest-v55-upload-skip-unchanged",
+  "updated_at": "2026-06-30 02:09:42",
+  "manifest_build": "2026-06-30-manifest-v56-failed-offer-history",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-06-29-safe-address-cleanup-v56",
-      "script_build": "2026-06-29-safe-address-cleanup-v56",
-      "bytes": 171354,
-      "content_sha1": "f4864fbf0bb80de85c8744fda198c40028a5e6f7"
+      "version_comment": "2026-06-30-failed-offer-history-v57",
+      "script_build": "2026-06-30-failed-offer-history-v57",
+      "bytes": 172739,
+      "content_sha1": "300c0a32ded7e1c81588b9e04ea996b7d24677b3"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
@@ -18,17 +18,17 @@
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-29-updater-daily-log-config-v31",
-      "script_build": "2026-06-29-updater-v31",
-      "bytes": 26379,
-      "content_sha1": "97059667d2f2425f8ec50dd7b287cc7dbdaa06f9"
+      "version_comment": "2026-06-30-updater-failed-offers-v32",
+      "script_build": "2026-06-30-updater-v32",
+      "bytes": 26583,
+      "content_sha1": "241fc802a85506da0bc9a87fa71eb1b1e9362130"
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
-      "version_comment": "2026-06-30-private-upload-skip-unchanged-v19",
-      "script_build": "2026-06-30-private-upload-skip-unchanged-v19",
-      "bytes": 36476,
-      "content_sha1": "cd6e7889c74063d984c71ef214350aee847ad427"
+      "version_comment": "2026-06-30-private-upload-failed-offers-v20",
+      "script_build": "2026-06-30-private-upload-failed-offers-v20",
+      "bytes": 36661,
+      "content_sha1": "2362869d39fead766a07210e7bbbeb637466a423"
     }
   }
 }

@@ -2,7 +2,7 @@ import base64
 import datetime
 import glob
 import hashlib
-# version: 2026-06-30-private-upload-skip-unchanged-v19
+# version: 2026-06-30-private-upload-failed-offers-v20
 import json
 import os
 import re
@@ -18,7 +18,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-30-private-upload-skip-unchanged-v19"
+SCRIPT_BUILD = "2026-06-30-private-upload-failed-offers-v20"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 8
 REQUEST_RETRY_ATTEMPTS = 2
@@ -74,6 +74,11 @@ DEFAULT_FILE_SPECS = [
     {
         "label": "active_offer_history",
         "local_rel_glob": "TestSubjextData/offers/history/*-active_offer_history.jsonl",
+        "remote_rel_dir": "offers/history",
+    },
+    {
+        "label": "failed_offer_history",
+        "local_rel_glob": "TestSubjextData/offers/history/*-failed_offer_history.jsonl",
         "remote_rel_dir": "offers/history",
     },
     {

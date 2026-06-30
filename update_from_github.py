@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-29-updater-daily-log-config-v31
+# version: 2026-06-30-updater-failed-offers-v32
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-29-updater-v31"
+SCRIPT_BUILD = "2026-06-30-updater-v32"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -45,6 +45,11 @@ DEFAULT_PRIVATE_SYNC_CONFIG = {
         {
             "label": "active_offer_history",
             "local_rel_glob": "TestSubjextData/offers/history/*-active_offer_history.jsonl",
+            "remote_rel_dir": "offers/history",
+        },
+        {
+            "label": "failed_offer_history",
+            "local_rel_glob": "TestSubjextData/offers/history/*-failed_offer_history.jsonl",
             "remote_rel_dir": "offers/history",
         },
         {

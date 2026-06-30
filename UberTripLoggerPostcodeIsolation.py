@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-29-safe-address-cleanup-v56
+# version: 2026-06-30-failed-offer-history-v57
 import hashlib
 import json
 import os
@@ -1137,7 +1137,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-29-argv-fast-daily-ledger-v55"
+SCRIPT_BUILD = "2026-06-30-failed-offer-history-v57"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1374,6 +1374,23 @@ def _write_active_offer(
     }
     _write_json(ACTIVE_OFFER_JSON_PATH, payload)
     _append_jsonl(_daily_jsonl_path(OFFERS_HISTORY_DIR, "active_offer_history", now_str[:10]), payload)
+    return payload
+
+
+def _write_failed_offer_history(now_str, reason, ocr_text, ocr_time, shortcut_source, parse_result=None):
+    payload = {
+        "timestamp": now_str,
+        "ok": False,
+        "reason": reason or "",
+        "ocr_text": ocr_text or "",
+        "ocr_seconds": round(float(ocr_time or 0.0), 4),
+        "shortcut_source": shortcut_source or {},
+        "shortcut_source_tag": (shortcut_source or {}).get("tag") or "",
+        "ocr_sha1": hashlib.sha1((ocr_text or "").encode("utf-8", errors="ignore")).hexdigest() if ocr_text else "",
+    }
+    if isinstance(parse_result, dict):
+        payload["parse"] = parse_result
+    _append_jsonl(_daily_jsonl_path(OFFERS_HISTORY_DIR, "failed_offer_history", now_str[:10]), payload)
     return payload
 
 
@@ -3699,6 +3716,7 @@ def main():
         selected_asset_created = _created_str(getattr(latest_asset, "creation_date", None)) if latest_asset else None
 
     if not parse_result or not parse_result["valid"]:
+        failure_now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if _looks_like_navigation_map(ocr_text):
             _runtime_print("[guard] Active navigation map detected. Exiting silently.")
             raise SystemExit(0)
@@ -3711,14 +3729,25 @@ def main():
                 "ocr_text": ocr_text,
                 "ocr_seconds": round(ocr_time, 4),
                 "asset_offer_score": preselected_score,
+                "timestamp": failure_now_str,
+                "shortcut_source": shortcut_source,
             }
             _write_json(LATEST_JSON_PATH, latest_payload)
+            _write_failed_offer_history(
+                failure_now_str,
+                "self_notification_capture",
+                ocr_text,
+                ocr_time,
+                shortcut_source,
+                parse_result,
+            )
             raise SystemExit(0)
 
         parse_reason = parse_result["parseError"] if parse_result else "parse_failed"
         ocr_preview = _compact_ocr_preview(ocr_text, 110) or "no OCR text"
         latest_payload = {
             "ok": False,
+            "timestamp": failure_now_str,
             "reason": parse_reason,
             "ocr_text": ocr_text,
             "ocr_seconds": round(ocr_time, 4),
@@ -3726,6 +3755,14 @@ def main():
             "shortcut_source": shortcut_source,
         }
         _write_json(LATEST_JSON_PATH, latest_payload)
+        _write_failed_offer_history(
+            failure_now_str,
+            parse_reason,
+            ocr_text,
+            ocr_time,
+            shortcut_source,
+            parse_result,
+        )
         shortcut_diag = "SRC %s %sB" % (
             shortcut_source.get("tag") or "PHOTO",
             shortcut_source.get("bytes") or 0,
