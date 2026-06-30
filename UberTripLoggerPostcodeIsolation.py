@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-30-route-line-belly-fallback-v61
+# version: 2026-06-30-route-line-runtime-grid-v62
 import hashlib
 import json
 import os
@@ -1143,7 +1143,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-30-route-line-belly-fallback-v61"
+SCRIPT_BUILD = "2026-06-30-route-line-runtime-grid-v62"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1836,19 +1836,178 @@ def _load_traffic_beacon_points():
     return points if isinstance(points, list) else []
 
 
-def _load_traffic_line_grid_db():
-    if not os.path.exists(TRAFFIC_LINE_GRID_DB_PATH):
-        return {}
-    try:
-        mtime = os.path.getmtime(TRAFFIC_LINE_GRID_DB_PATH)
-    except Exception:
-        return {}
-    if _LINE_GRID_DB_CACHE.get("mtime") == mtime and isinstance(_LINE_GRID_DB_CACHE.get("payload"), dict):
-        return _LINE_GRID_DB_CACHE.get("payload") or {}
-    payload = _load_json_dict(TRAFFIC_LINE_GRID_DB_PATH)
-    _LINE_GRID_DB_CACHE["mtime"] = mtime
-    _LINE_GRID_DB_CACHE["payload"] = payload
+def _runtime_line_grid_confidence(samples):
+    value = int(samples or 0)
+    if value >= 8:
+        return "high"
+    if value >= 3:
+        return "medium"
+    return "low"
+
+
+def _runtime_empty_line_grid_counter(with_time_buckets=True):
+    return {
+        "traffic_count": 0,
+        "no_traffic_count": 0,
+        "net_score": 0,
+        "samples": 0,
+        "raw_beacon_hits": 0,
+        "confidence": "low",
+        "last_seen": "",
+        "days_seen": {},
+        "unique_day_hits": 0,
+        "time_buckets": {} if with_time_buckets else None,
+        "time_windows_15m": {} if with_time_buckets else None,
+    }
+
+
+def _line_grid_latlon_from_xy_meters(x_meters, y_meters):
+    earth_radius = 6371000.0
+    origin_lat_rad = math.radians(LONDON_GRID_ORIGIN_LAT)
+    lat = LONDON_GRID_ORIGIN_LAT + math.degrees(float(y_meters or 0.0) / earth_radius)
+    lon = LONDON_GRID_ORIGIN_LON + math.degrees(float(x_meters or 0.0) / (earth_radius * math.cos(origin_lat_rad)))
+    return round(lat, 6), round(lon, 6)
+
+
+def _line_grid_cell_key(latitude, longitude):
+    x_meters, y_meters = _line_grid_xy_meters(latitude, longitude)
+    if abs(x_meters) < 0.000001 and abs(y_meters) < 0.000001:
+        return "", 0, 0, 0.0, 0.0, 0.0, 0.0
+    x_index = int(round(x_meters / LINE_GRID_CELL_SIZE_METERS))
+    y_index = int(round(y_meters / LINE_GRID_CELL_SIZE_METERS))
+    center_x = float(x_index) * LINE_GRID_CELL_SIZE_METERS
+    center_y = float(y_index) * LINE_GRID_CELL_SIZE_METERS
+    center_lat, center_lon = _line_grid_latlon_from_xy_meters(center_x, center_y)
+    return (
+        "%s,%s" % (x_index, y_index),
+        x_index,
+        y_index,
+        round(center_x, 1),
+        round(center_y, 1),
+        center_lat,
+        center_lon,
+    )
+
+
+def _runtime_touch_line_grid_counter(bucket, timestamp):
+    date_key = ("%s" % (timestamp or "")).strip()[:10]
+    bucket["traffic_count"] = int(bucket.get("traffic_count") or 0) + 1
+    bucket["net_score"] = int(bucket.get("traffic_count") or 0) - int(bucket.get("no_traffic_count") or 0)
+    bucket["samples"] = int(bucket.get("samples") or 0) + 1
+    bucket["raw_beacon_hits"] = int(bucket.get("samples") or 0)
+    bucket["confidence"] = _runtime_line_grid_confidence(bucket.get("samples") or 0)
+    bucket["last_seen"] = timestamp or bucket.get("last_seen") or ""
+    if date_key:
+        bucket.setdefault("days_seen", {})
+        bucket["days_seen"][date_key] = int(bucket["days_seen"].get(date_key) or 0) + 1
+        bucket["unique_day_hits"] = len(bucket.get("days_seen") or {})
+
+
+def _runtime_touch_line_grid_leaf(parent, leaf_key, timestamp):
+    leaves = parent.setdefault(leaf_key, {})
+    if not isinstance(leaves, dict):
+        leaves = {}
+        parent[leaf_key] = leaves
+    leaf_bucket_key = _fine_bucket_key(_parse_local_timestamp(timestamp) or datetime.datetime.now()) if leaf_key == "time_windows_15m" else _traffic_time_bucket(_parse_local_timestamp(timestamp) or datetime.datetime.now())
+    leaf = leaves.setdefault(leaf_bucket_key, _runtime_empty_line_grid_counter(with_time_buckets=False))
+    _runtime_touch_line_grid_counter(leaf, timestamp)
+
+
+def _runtime_line_grid_bucket(cell_key, x_index, y_index, center_x, center_y, center_lat, center_lon):
+    return {
+        "cell": cell_key,
+        "x_index": int(x_index),
+        "y_index": int(y_index),
+        "center_x_m": round(float(center_x or 0.0), 1),
+        "center_y_m": round(float(center_y or 0.0), 1),
+        "center_lat": round(float(center_lat or 0.0), 6),
+        "center_lon": round(float(center_lon or 0.0), 6),
+        "beacon_outcodes": {},
+        "beacon_sectors": {},
+        **_runtime_empty_line_grid_counter(),
+    }
+
+
+def _build_runtime_line_grid_db_from_points(points):
+    payload = {
+        "schema_version": 1,
+        "runtime_fallback": True,
+        "source": "route_points_runtime",
+        "updated_at": _timestamp(),
+        "origin_lat": LONDON_GRID_ORIGIN_LAT,
+        "origin_lon": LONDON_GRID_ORIGIN_LON,
+        "cell_size_m": LINE_GRID_CELL_SIZE_METERS,
+        "total_entries": 0,
+        "total_cells": 0,
+        "cells": {},
+    }
+    cells = payload["cells"]
+    for point in points or []:
+        lat = _safe_float((point or {}).get("lat"), 0.0)
+        lon = _safe_float((point or {}).get("lon"), 0.0)
+        if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+            continue
+        cell_key, x_index, y_index, center_x, center_y, center_lat, center_lon = _line_grid_cell_key(lat, lon)
+        if not cell_key:
+            continue
+        bucket = cells.setdefault(
+            cell_key,
+            _runtime_line_grid_bucket(cell_key, x_index, y_index, center_x, center_y, center_lat, center_lon),
+        )
+        timestamp = ("%s" % ((point or {}).get("timestamp") or "")).strip()
+        _runtime_touch_line_grid_counter(bucket, timestamp)
+        _runtime_touch_line_grid_leaf(bucket, "time_buckets", timestamp)
+        _runtime_touch_line_grid_leaf(bucket, "time_windows_15m", timestamp)
+        outcode = ("%s" % ((point or {}).get("outcode") or "")).strip().upper()
+        sector = ("%s" % ((point or {}).get("sector") or "")).strip().upper()
+        if outcode:
+            bucket["beacon_outcodes"][outcode] = int(bucket["beacon_outcodes"].get(outcode) or 0) + 1
+        if sector:
+            bucket["beacon_sectors"][sector] = int(bucket["beacon_sectors"].get(sector) or 0) + 1
+        payload["total_entries"] = int(payload.get("total_entries") or 0) + 1
+    payload["total_cells"] = len(cells)
     return payload
+
+
+def _load_traffic_line_grid_db():
+    line_grid_exists = os.path.exists(TRAFFIC_LINE_GRID_DB_PATH)
+    line_grid_mtime = None
+    if line_grid_exists:
+        try:
+            line_grid_mtime = os.path.getmtime(TRAFFIC_LINE_GRID_DB_PATH)
+        except Exception:
+            line_grid_exists = False
+            line_grid_mtime = None
+    route_points_mtime = None
+    if os.path.exists(TRAFFIC_ROUTE_POINT_DB_PATH):
+        try:
+            route_points_mtime = os.path.getmtime(TRAFFIC_ROUTE_POINT_DB_PATH)
+        except Exception:
+            route_points_mtime = None
+    if (
+        line_grid_exists
+        and _LINE_GRID_DB_CACHE.get("mtime") == line_grid_mtime
+        and isinstance(_LINE_GRID_DB_CACHE.get("payload"), dict)
+        and (route_points_mtime is None or route_points_mtime <= line_grid_mtime)
+    ):
+        return _LINE_GRID_DB_CACHE.get("payload") or {}
+    payload = _load_json_dict(TRAFFIC_LINE_GRID_DB_PATH) if line_grid_exists else {}
+    cells = payload.get("cells") or {}
+    payload_is_usable = isinstance(cells, dict) and len(cells) > 0
+    line_grid_is_fresh = line_grid_mtime is not None and (route_points_mtime is None or route_points_mtime <= line_grid_mtime)
+    if payload_is_usable and line_grid_is_fresh:
+        _LINE_GRID_DB_CACHE["mtime"] = line_grid_mtime
+        _LINE_GRID_DB_CACHE["payload"] = payload
+        return payload
+    points = _load_traffic_beacon_points()
+    if points:
+        runtime_payload = _build_runtime_line_grid_db_from_points(points)
+        _LINE_GRID_DB_CACHE["mtime"] = None
+        _LINE_GRID_DB_CACHE["payload"] = runtime_payload
+        return runtime_payload
+    _LINE_GRID_DB_CACHE["mtime"] = line_grid_mtime
+    _LINE_GRID_DB_CACHE["payload"] = payload if isinstance(payload, dict) else {}
+    return _LINE_GRID_DB_CACHE.get("payload") or {}
 
 
 def _parse_outcode_family(outcode):
@@ -3348,7 +3507,8 @@ def _compact_route_beacon_count(route_line_shadow):
     shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
     exact_hits = int(shadow.get("exact_hits") or 0)
     near_hits = int(shadow.get("near_hits") or 0)
-    return max(0, exact_hits + near_hits)
+    endpoint_hits = int(shadow.get("endpoint_hits") or 0)
+    return max(0, exact_hits + near_hits + endpoint_hits)
 
 
 def _compact_traffic_notification_token(traffic_verdict, route_line_shadow):
@@ -4227,11 +4387,12 @@ def main():
         beacon_count = _compact_route_beacon_count(route_line_shadow)
         if beacon_count > 0:
             body_lines.append(
-                "Route Beacons B%s | exact %s | near %s"
+                "Route Beacons B%s | exact %s | near %s | endpoint %s"
                 % (
                     beacon_count,
                     route_line_audit.get("exact_hits", 0),
                     route_line_audit.get("near_hits", 0),
+                    route_line_shadow.get("endpoint_hits", 0),
                 )
             )
         route_direction_summary = ("%s" % (route_shadow.get("direction_summary") or "")).strip()
