@@ -1,6 +1,6 @@
 {
-  "updated_at": "2026-06-30 02:09:42",
-  "manifest_build": "2026-06-30-manifest-v56-failed-offer-history",
+  "updated_at": "2026-06-30 02:35:00",
+  "manifest_build": "2026-06-30-manifest-v57-updater-single-run",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
@@ -18,10 +18,10 @@
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-30-updater-failed-offers-v32",
-      "script_build": "2026-06-30-updater-v32",
-      "bytes": 26583,
-      "content_sha1": "241fc802a85506da0bc9a87fa71eb1b1e9362130"
+      "version_comment": "2026-06-30-updater-single-run-upload-v33",
+      "script_build": "2026-06-30-updater-v33",
+      "bytes": 26833,
+      "content_sha1": "c12d693b7b92a239c3882c7ec34f179a7b145ad4"
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
