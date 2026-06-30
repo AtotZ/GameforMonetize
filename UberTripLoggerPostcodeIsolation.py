@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-30-route-token-safe-v58
+# version: 2026-06-30-history-write-trace-v59
 import hashlib
 import json
 import os
@@ -1137,7 +1137,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-30-route-token-safe-v58"
+SCRIPT_BUILD = "2026-06-30-history-write-trace-v59"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1176,6 +1176,7 @@ TRAFFIC_ROUTE_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficRoute-db.json")
 TRAFFIC_ROUTE_POINT_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-route-points.json")
 TRAFFIC_LINE_GRID_DB_PATH = os.path.join(TRAFFIC_DATA_DIR, "TrafficBeacon-line-grid.json")
 ACTIVE_OFFER_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "active_offer.json")
+OFFER_HISTORY_STATUS_PATH = os.path.join(OFFERS_DATA_DIR, "offer_history_write_status.json")
 TEXT_LOG_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.txt")
 LEDGER_PATH = os.path.join(LOGS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation.jsonl")
 LATEST_JSON_PATH = os.path.join(OFFERS_DATA_DIR, "TripLog-OnisAI-PostcodeIsolation-latest.json")
@@ -1325,6 +1326,25 @@ def _daily_text_path(base_dir, stem, day_text):
     return os.path.join(base_dir, "%s-%s.txt" % (day, stem))
 
 
+def _record_offer_history_write(kind, path, payload):
+    try:
+        size_bytes = os.path.getsize(path) if os.path.exists(path) else 0
+    except Exception:
+        size_bytes = 0
+    status_payload = {
+        "timestamp": _timestamp(),
+        "script_build": SCRIPT_BUILD,
+        "kind": kind or "",
+        "path": path or "",
+        "exists": bool(path and os.path.exists(path)),
+        "size_bytes": int(size_bytes or 0),
+        "payload_timestamp": ("%s" % ((payload or {}).get("timestamp") or "")).strip(),
+        "ocr_sha1": ("%s" % ((payload or {}).get("ocr_sha1") or "")).strip(),
+    }
+    _write_json(OFFER_HISTORY_STATUS_PATH, status_payload)
+    return status_payload
+
+
 def _write_active_offer(
     parsed,
     metrics,
@@ -1336,6 +1356,7 @@ def _write_active_offer(
     now_str,
     ocr_sha1,
 ):
+    history_path = _daily_jsonl_path(OFFERS_HISTORY_DIR, "active_offer_history", now_str[:10])
     payload = {
         "timestamp": now_str,
         "pickup_address": parsed.get("pickup_address") or "",
@@ -1371,13 +1392,16 @@ def _write_active_offer(
         "route_line_audit": route_line_audit,
         "shortcut_source_tag": shortcut_source.get("tag") or "",
         "ocr_sha1": ocr_sha1 or "",
+        "_history_path": history_path,
     }
     _write_json(ACTIVE_OFFER_JSON_PATH, payload)
-    _append_jsonl(_daily_jsonl_path(OFFERS_HISTORY_DIR, "active_offer_history", now_str[:10]), payload)
+    _append_jsonl(history_path, payload)
+    _record_offer_history_write("active_offer_history", history_path, payload)
     return payload
 
 
 def _write_failed_offer_history(now_str, reason, ocr_text, ocr_time, shortcut_source, parse_result=None):
+    history_path = _daily_jsonl_path(OFFERS_HISTORY_DIR, "failed_offer_history", now_str[:10])
     payload = {
         "timestamp": now_str,
         "ok": False,
@@ -1387,10 +1411,12 @@ def _write_failed_offer_history(now_str, reason, ocr_text, ocr_time, shortcut_so
         "shortcut_source": shortcut_source or {},
         "shortcut_source_tag": (shortcut_source or {}).get("tag") or "",
         "ocr_sha1": hashlib.sha1((ocr_text or "").encode("utf-8", errors="ignore")).hexdigest() if ocr_text else "",
+        "_history_path": history_path,
     }
     if isinstance(parse_result, dict):
         payload["parse"] = parse_result
-    _append_jsonl(_daily_jsonl_path(OFFERS_HISTORY_DIR, "failed_offer_history", now_str[:10]), payload)
+    _append_jsonl(history_path, payload)
+    _record_offer_history_write("failed_offer_history", history_path, payload)
     return payload
 
 
