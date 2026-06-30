@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-30-route-line-runtime-grid-v62
+# version: 2026-06-30-route-line-point-fallback-v63
 import hashlib
 import json
 import os
@@ -1143,7 +1143,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-30-route-line-runtime-grid-v62"
+SCRIPT_BUILD = "2026-06-30-route-line-point-fallback-v63"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -2915,6 +2915,182 @@ def _route_line_hit_weight(beacon_dt, now_dt, distance_m):
     }
 
 
+def _route_line_point_fallback_snapshot(path_points, pickup_endpoint, dropoff_endpoint, now_dt):
+    points = _load_traffic_beacon_points()
+    result = {
+        "matched": False,
+        "source": "beacon_point_shadow",
+        "model": "route_points_v1",
+        "route_length_m": 0.0,
+        "candidate_cells": 0,
+        "matched_cells": 0,
+        "cell_size_m": 0.0,
+        "route_candidates": 1,
+        "selected_candidate": "direct_points",
+        "selected_via_cells": [],
+        "exact_hits": 0,
+        "near_hits": 0,
+        "endpoint_hits": 0,
+        "time_bucket_hits": 0,
+        "strong_time_hits": 0,
+        "unique_outcodes": 0,
+        "unique_sectors": 0,
+        "top_outcodes": [],
+        "top_sectors": [],
+        "closest_hit_m": 0.0,
+        "status_hint": "none",
+        "trap_score": 0.0,
+        "same_weekday_days": 0,
+        "same_weekpart_days": 0,
+        "weekday_relevance": "",
+        "weekday_multiplier": 0.0,
+        "matched_fine_buckets": [],
+        "adjacent_fine_buckets": [],
+    }
+    if len(path_points or []) < 2 or not points:
+        return result
+
+    try:
+        _, route_length_m = _route_line_candidate_grid_keys_for_points(
+            path_points,
+            LINE_GRID_CELL_SIZE_METERS,
+            ROUTE_LINE_NEAR_METERS,
+        )
+    except Exception:
+        route_length_m = 0.0
+    result["route_length_m"] = round(float(route_length_m or 0.0), 1)
+    result["candidate_cells"] = len(points)
+
+    outcode_counts = {}
+    sector_counts = {}
+    matched_fine_buckets = set()
+    adjacent_fine_buckets = set()
+    day_keys = set()
+    same_weekday_days = 0
+    same_weekpart_days = 0
+    closest_hit = None
+    trap_score = 0.0
+
+    offer_primary_fine_bucket = _fine_bucket_key(_fine_bucket_start(now_dt))
+    offer_neighbor_fine_buckets = {
+        item[0]
+        for item in _fine_bucket_neighbor_keys(now_dt)[1:]
+    }
+    target_weekday = int(now_dt.weekday())
+    target_is_weekday = target_weekday < 5
+
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        lat = _safe_float(point.get("lat"), 0.0)
+        lon = _safe_float(point.get("lon"), 0.0)
+        if abs(lat) < 0.000001 and abs(lon) < 0.000001:
+            continue
+        distance_m, progress = _route_line_polyline_distance_meters(lat, lon, path_points)
+        pickup_distance_m, _ = _distance_point_to_segment_meters(
+            lat,
+            lon,
+            pickup_endpoint.get("lat"),
+            pickup_endpoint.get("lon"),
+            pickup_endpoint.get("lat"),
+            pickup_endpoint.get("lon"),
+        )
+        dropoff_distance_m, _ = _distance_point_to_segment_meters(
+            lat,
+            lon,
+            dropoff_endpoint.get("lat"),
+            dropoff_endpoint.get("lon"),
+            dropoff_endpoint.get("lat"),
+            dropoff_endpoint.get("lon"),
+        )
+        endpoint_distance_m = min(float(pickup_distance_m or 0.0), float(dropoff_distance_m or 0.0))
+        inside_endpoint_circle = endpoint_distance_m <= float(ROUTE_LINE_ENDPOINT_METERS)
+        if distance_m > ROUTE_LINE_NEAR_METERS and not inside_endpoint_circle:
+            continue
+
+        beacon_dt = _parse_local_timestamp(point.get("timestamp") or "")
+        hit_weight = _route_line_hit_weight(beacon_dt, now_dt, min(distance_m, endpoint_distance_m))
+        if hit_weight["score"] <= 0.0:
+            continue
+
+        result["matched_cells"] = int(result.get("matched_cells") or 0) + 1
+        if distance_m <= ROUTE_LINE_EXACT_METERS:
+            result["exact_hits"] = int(result.get("exact_hits") or 0) + 1
+        elif distance_m <= ROUTE_LINE_NEAR_METERS:
+            result["near_hits"] = int(result.get("near_hits") or 0) + 1
+        else:
+            result["endpoint_hits"] = int(result.get("endpoint_hits") or 0) + 1
+
+        if hit_weight["bucket_match"] or hit_weight["adjacent_match"] or (
+            beacon_dt and _traffic_time_bucket(beacon_dt) == _traffic_time_bucket(now_dt)
+        ):
+            result["time_bucket_hits"] = int(result.get("time_bucket_hits") or 0) + 1
+        if hit_weight["bucket_match"]:
+            result["strong_time_hits"] = int(result.get("strong_time_hits") or 0) + 1
+
+        point_fine_bucket = _fine_bucket_key(_fine_bucket_start(beacon_dt)) if beacon_dt else ""
+        if point_fine_bucket:
+            if point_fine_bucket == offer_primary_fine_bucket:
+                matched_fine_buckets.add(point_fine_bucket)
+            elif point_fine_bucket in offer_neighbor_fine_buckets:
+                adjacent_fine_buckets.add(point_fine_bucket)
+
+        point_day_key = ("%s" % (point.get("timestamp") or "")).strip()[:10]
+        if point_day_key:
+            day_keys.add(point_day_key)
+            weekday_value = _day_key_weekday(point_day_key)
+            if weekday_value is not None:
+                if weekday_value == target_weekday:
+                    same_weekday_days += 1
+                if (weekday_value < 5) == target_is_weekday:
+                    same_weekpart_days += 1
+
+        trap_score += float(hit_weight["score"] or 0.0)
+        outcode = ("%s" % (point.get("outcode") or "")).strip().upper()
+        sector = ("%s" % (point.get("sector") or "")).strip().upper()
+        if outcode:
+            outcode_counts[outcode] = int(outcode_counts.get(outcode) or 0) + 1
+        if sector:
+            sector_counts[sector] = int(sector_counts.get(sector) or 0) + 1
+
+        hit = {
+            "distance_m": round(min(float(distance_m or 0.0), float(endpoint_distance_m or 0.0)), 1),
+            "progress": round(progress, 3),
+            "outcode": outcode,
+            "sector": sector,
+            "timestamp": point.get("timestamp") or "",
+        }
+        if closest_hit is None or hit["distance_m"] < closest_hit["distance_m"]:
+            closest_hit = hit
+
+    if int(result.get("matched_cells") or 0) <= 0:
+        return result
+
+    result.update(
+        {
+            "matched": True,
+            "unique_outcodes": len(outcode_counts),
+            "unique_sectors": len(sector_counts),
+            "top_outcodes": [item[0] for item in sorted(outcode_counts.items(), key=lambda item: (-item[1], item[0]))[:3]],
+            "top_sectors": [item[0] for item in sorted(sector_counts.items(), key=lambda item: (-item[1], item[0]))[:3]],
+            "closest_hit_m": round(float((closest_hit or {}).get("distance_m") or 0.0), 1),
+            "status_hint": _route_line_status_hint(
+                int(result.get("exact_hits") or 0),
+                int(result.get("near_hits") or 0) + int(result.get("endpoint_hits") or 0),
+                int(result.get("time_bucket_hits") or 0),
+            ),
+            "trap_score": round(trap_score, 2),
+            "same_weekday_days": len(day_keys),
+            "same_weekpart_days": same_weekpart_days,
+            "weekday_relevance": ("same_weekday_points" if same_weekday_days > 0 else ("same_weekpart_points" if same_weekpart_days > 0 else "")),
+            "weekday_multiplier": 1.0 if same_weekday_days > 0 else (0.7 if same_weekpart_days > 0 else 0.45),
+            "matched_fine_buckets": sorted(matched_fine_buckets),
+            "adjacent_fine_buckets": sorted(adjacent_fine_buckets),
+        }
+    )
+    return result
+
+
 def _route_line_shadow_snapshot(parsed, now_dt=None):
     now_dt = now_dt or datetime.datetime.now()
     payload = {
@@ -3012,6 +3188,15 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
     payload["route_length_m"] = round(float(selected_result.get("route_length_m") or 0.0), 1)
     payload["candidate_cells"] = int(selected_result.get("candidate_cells") or 0)
     if int(selected_result.get("matched_cells") or 0) <= 0:
+        point_fallback = _route_line_point_fallback_snapshot(
+            selected_result.get("path_points") or [pickup_endpoint, dropoff_endpoint],
+            pickup_endpoint,
+            dropoff_endpoint,
+            now_dt,
+        )
+        if point_fallback.get("matched"):
+            payload.update(point_fallback)
+            return payload
         payload["selected_candidate"] = selected_candidate.get("label") or "direct"
         payload["selected_via_cells"] = [
             ("%s" % (point.get("cell") or "")).strip()
