@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-06-30 02:35:00",
-  "manifest_build": "2026-06-30-manifest-v57-updater-single-run",
+  "updated_at": "2026-06-30 03:02:00",
+  "manifest_build": "2026-06-30-manifest-v58-lf-sha-fix",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
       "version_comment": "2026-06-30-failed-offer-history-v57",
       "script_build": "2026-06-30-failed-offer-history-v57",
-      "bytes": 172739,
-      "content_sha1": "300c0a32ded7e1c81588b9e04ea996b7d24677b3"
+      "bytes": 169254,
+      "content_sha1": "4d7b836a319e790e6803b069fde61bbdeb1ea61e"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
