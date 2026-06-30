@@ -1,6 +1,6 @@
 {
-  "updated_at": "2026-06-29 09:56:39",
-  "manifest_build": "2026-06-29-manifest-v54-safe-address-cleanup",
+  "updated_at": "2026-06-30 01:58:53",
+  "manifest_build": "2026-06-30-manifest-v55-upload-skip-unchanged",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
@@ -25,10 +25,10 @@
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
-      "version_comment": "2026-06-29-private-data-upload-daily-logs-v18",
-      "script_build": "2026-06-29-private-upload-daily-logs-v18",
-      "bytes": 35336,
-      "content_sha1": "74ec56c46dc10a1ad1fe3e8d7c5d61a0f1c5d48f"
+      "version_comment": "2026-06-30-private-upload-skip-unchanged-v19",
+      "script_build": "2026-06-30-private-upload-skip-unchanged-v19",
+      "bytes": 36476,
+      "content_sha1": "cd6e7889c74063d984c71ef214350aee847ad427"
     }
   }
 }

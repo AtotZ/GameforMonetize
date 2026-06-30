@@ -2,7 +2,7 @@ import base64
 import datetime
 import glob
 import hashlib
-# version: 2026-06-29-private-data-upload-daily-logs-v18
+# version: 2026-06-30-private-upload-skip-unchanged-v19
 import json
 import os
 import re
@@ -18,7 +18,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-29-private-upload-daily-logs-v18"
+SCRIPT_BUILD = "2026-06-30-private-upload-skip-unchanged-v19"
 API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 8
 REQUEST_RETRY_ATTEMPTS = 2
@@ -655,6 +655,19 @@ def _upload_one(config, item, cache_payload):
         }
     content_sha1 = _sha1_bytes(raw)
     cached = cache_payload["files"].get(remote_path) or {}
+    cached_content_sha1 = ("%s" % (cached.get("content_sha1") or "")).strip().lower()
+    cached_mtime_ns = _safe_int(cached.get("local_mtime_ns"), 0)
+    local_mtime_ns = int(getattr(stat_result, "st_mtime_ns", 0))
+    if cached_content_sha1 and cached_content_sha1 == content_sha1 and cached_mtime_ns == local_mtime_ns:
+        return {
+            "label": item.get("label") or remote_rel_path,
+            "local_rel_path": local_rel_path,
+            "remote_rel_path": remote_path,
+            "status": "skipped_unchanged",
+            "bytes": len(raw),
+            "content_sha1": content_sha1,
+            "sha": ("%s" % (cached.get("remote_sha") or "")).strip(),
+        }
     message = "%s | %s | %s" % (
         config["commit_message_prefix"],
         item.get("label") or remote_rel_path,
@@ -685,7 +698,7 @@ def _upload_one(config, item, cache_payload):
         "content_sha1": content_sha1,
         "bytes": len(raw),
         "remote_sha": remote_sha,
-        "local_mtime_ns": int(getattr(stat_result, "st_mtime_ns", 0)),
+        "local_mtime_ns": local_mtime_ns,
         "last_uploaded_at": _timestamp(),
         "label": item.get("label") or remote_rel_path,
     }
@@ -694,6 +707,7 @@ def _upload_one(config, item, cache_payload):
 
 def _build_manifest(upload_results, invocation_context):
     uploaded = [item for item in upload_results if item.get("status") == "uploaded"]
+    skipped = [item for item in upload_results if item.get("status") == "skipped_unchanged"]
     missing = [item for item in upload_results if item.get("status") == "missing_local"]
     too_large = [item for item in upload_results if item.get("status") == "too_large"]
     return {
@@ -704,9 +718,11 @@ def _build_manifest(upload_results, invocation_context):
         "invoked_started_at": invocation_context.get("invoked_started_at") or "",
         "update_chain_ok": bool(invocation_context.get("update_chain_ok")),
         "uploaded_count": len(uploaded),
+        "skipped_unchanged_count": len(skipped),
         "missing_count": len(missing),
         "too_large_count": len(too_large),
         "uploaded_files": uploaded,
+        "skipped_unchanged_files": skipped,
         "missing_files": missing,
         "too_large_files": too_large,
     }
@@ -879,9 +895,10 @@ def main():
     }
     _write_json(STATUS_PATH, status)
     _log(
-        "[private-upload] uploaded=%d missing=%d too_large=%d failed=%d backlog=%d days=%d repo=%s/%s"
+        "[private-upload] uploaded=%d skipped=%d missing=%d too_large=%d failed=%d backlog=%d days=%d repo=%s/%s"
         % (
             len([item for item in results if item.get("status") == "uploaded"]),
+            len([item for item in results if item.get("status") == "skipped_unchanged"]),
             len([item for item in results if item.get("status") == "missing_local"]),
             len([item for item in results if item.get("status") == "too_large"]),
             failed_count,
@@ -893,20 +910,23 @@ def main():
     )
     if invocation_context.get("invoked_by") != "update_from_github":
         uploaded_count = len([item for item in results if item.get("status") == "uploaded"])
+        skipped_count = len([item for item in results if item.get("status") == "skipped_unchanged"])
         deferred_count = len([item for item in results if item.get("status") == "deferred_power_save"])
         if failed_count == 0:
             _send_local_notification(
                 "Upload done",
-                "Sent %d, deferred %d." % (
+                "Sent %d, skipped %d, deferred %d." % (
                     uploaded_count,
+                    skipped_count,
                     deferred_count,
                 ),
             )
         else:
             _send_local_notification(
                 "Upload issue",
-                "Sent %d, failed %d, deferred %d." % (
+                "Sent %d, skipped %d, failed %d, deferred %d." % (
                     uploaded_count,
+                    skipped_count,
                     failed_count,
                     deferred_count,
                 ),
