@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-30-history-write-trace-v59
+# version: 2026-06-30-route-line-safe-float-v60
 import hashlib
 import json
 import os
@@ -439,6 +439,12 @@ if True:
                 continue
             lines.append(raw_line)
         return "\n".join(lines).strip()
+
+    def _safe_float(value, default=0.0):
+        try:
+            return float(value)
+        except Exception:
+            return default
 
     def _parse_money(raw):
         if not raw:
@@ -1137,7 +1143,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-30-history-write-trace-v59"
+SCRIPT_BUILD = "2026-06-30-route-line-safe-float-v60"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
