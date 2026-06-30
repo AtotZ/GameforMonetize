@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-06-30 08:09:00",
-  "manifest_build": "2026-06-30-manifest-v63-route-line-belly-fallback",
+  "updated_at": "2026-06-30 20:40:00",
+  "manifest_build": "2026-06-30-manifest-v64-normalized-hash-fix",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
       "version_comment": "2026-06-30-route-line-belly-fallback-v61",
       "script_build": "2026-06-30-route-line-belly-fallback-v61",
-      "bytes": 189849,
-      "content_sha1": "4eab2bade90bb58047d80b8d39729cbcf47ddfdf"
+      "bytes": 186431,
+      "content_sha1": "3b3bdd36ed958e536610759ac00090858c12e12f"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
@@ -18,10 +18,10 @@
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-30-updater-manifest-fallback-v34",
-      "script_build": "2026-06-30-updater-v34",
-      "bytes": 27104,
-      "content_sha1": "9b4ca82b56f74071968f8b774649ab9f27dab777"
+      "version_comment": "2026-06-30-updater-normalized-hash-v35",
+      "script_build": "2026-06-30-updater-v35",
+      "bytes": 27436,
+      "content_sha1": "3e228507db78d36aba033897a00dc344724194dc"
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",

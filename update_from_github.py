@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-30-updater-manifest-fallback-v34
+# version: 2026-06-30-updater-normalized-hash-v35
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-30-updater-v34"
+SCRIPT_BUILD = "2026-06-30-updater-v35"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -277,6 +277,19 @@ def _sha1_bytes(raw):
     return hashlib.sha1(raw).hexdigest()
 
 
+def _normalize_text_newlines(text):
+    value = "%s" % (text or "")
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _normalized_text_bytes(text):
+    return _normalize_text_newlines(text).encode("utf-8")
+
+
+def _normalized_text_sha1(text):
+    return _sha1_bytes(_normalized_text_bytes(text))
+
+
 def _extract_version_from_text(text):
     value = "%s" % (text or "")
     version_match = re.search(r"^\s*#\s*version:\s*(.+?)\s*$", value, re.MULTILINE)
@@ -300,8 +313,8 @@ def _read_local_version(path):
 
 def _read_local_file_sha1(path):
     try:
-        with open(path, "rb") as handle:
-            return _sha1_bytes(handle.read())
+        with open(path, "r", encoding="utf-8") as handle:
+            return _normalized_text_sha1(handle.read())
     except Exception:
         return ""
 
@@ -367,7 +380,7 @@ def _download_text_verified(url, item, manifest_entry):
     last_sha1 = ""
     for attempt in range(1, RAW_MISMATCH_RETRY_COUNT + 1):
         source_text = _download_text(url, cache_bust=True)
-        content_sha1 = _sha1_bytes(source_text.encode("utf-8")).lower()
+        content_sha1 = _normalized_text_sha1(source_text).lower()
         if content_sha1 == expected_sha1:
             return source_text
         last_text = source_text
@@ -545,7 +558,7 @@ def _update_one_file(item, manifest_payload):
         raise RuntimeError("GitHub returned 404 for %s" % item["remote_name"])
     if "import " not in source_text and "def " not in source_text:
         raise RuntimeError("Downloaded content for %s does not look like Python code." % item["remote_name"])
-    content_sha1 = _sha1_bytes(source_text.encode("utf-8"))
+    content_sha1 = _normalized_text_sha1(source_text)
     changed = local_sha1.lower() != content_sha1.lower()
     if changed:
         _write_text(target_path, source_text)
@@ -555,7 +568,7 @@ def _update_one_file(item, manifest_payload):
         "local_name": item["local_name"],
         "target_path": target_path,
         "download_url": url,
-        "bytes": len(source_text.encode("utf-8")),
+        "bytes": len(_normalized_text_bytes(source_text)),
         "version_comment": version_info["version_comment"],
         "script_build": version_info["script_build"],
         "content_sha1": content_sha1,

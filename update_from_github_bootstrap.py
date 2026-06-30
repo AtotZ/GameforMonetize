@@ -1,5 +1,5 @@
 import datetime
-# version: 2026-06-26-updater-bootstrap-force-v1
+# version: 2026-06-30-updater-bootstrap-normalized-v2
 import hashlib
 import os
 import re
@@ -7,7 +7,7 @@ import time
 import urllib.request
 
 
-SCRIPT_BUILD = "2026-06-26-updater-bootstrap-v1"
+SCRIPT_BUILD = "2026-06-30-updater-bootstrap-v2"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 DOWNLOAD_TIMEOUT_SECONDS = 20
 
@@ -90,6 +90,15 @@ def _sha1_bytes(raw):
     return hashlib.sha1(raw).hexdigest()
 
 
+def _normalize_text_newlines(text):
+    value = "%s" % (text or "")
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _normalized_text_bytes(text):
+    return _normalize_text_newlines(text).encode("utf-8")
+
+
 def _update_one_file(item):
     cachebuster = int(time.time())
     url = "%s/%s?cb=%s" % (REPO_RAW_ROOT, item["remote_name"], cachebuster)
@@ -104,10 +113,10 @@ def _update_one_file(item):
     return {
         "remote_name": item["remote_name"],
         "local_name": item["local_name"],
-        "bytes": len(source_text.encode("utf-8")),
+        "bytes": len(_normalized_text_bytes(source_text)),
         "version_comment": version_info["version_comment"],
         "script_build": version_info["script_build"],
-        "content_sha1": _sha1_bytes(source_text.encode("utf-8")),
+        "content_sha1": _sha1_bytes(_normalized_text_bytes(source_text)),
     }
 
 
