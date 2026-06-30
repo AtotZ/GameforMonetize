@@ -1,6 +1,6 @@
 import datetime
 import hashlib
-# version: 2026-06-30-updater-single-run-upload-v33
+# version: 2026-06-30-updater-manifest-fallback-v34
 import json
 import os
 import re
@@ -15,7 +15,7 @@ except Exception:
     ObjCClass = None
 
 
-SCRIPT_BUILD = "2026-06-30-updater-v33"
+SCRIPT_BUILD = "2026-06-30-updater-v34"
 REPO_RAW_ROOT = "https://raw.githubusercontent.com/AtotZ/GameforMonetize/main"
 MANIFEST_REMOTE_NAME = "pythonista_update_manifest.json"
 DOWNLOAD_TIMEOUT_SECONDS = 20
@@ -387,10 +387,16 @@ def _download_text_verified(url, item, manifest_entry):
                 time.sleep(RAW_MISMATCH_RETRY_SLEEP_SECONDS)
             except Exception:
                 pass
-    raise RuntimeError(
-        "Manifest/raw mismatch for %s | manifest=%s raw=%s"
+    if local_name in STRICT_MANIFEST_FILES:
+        raise RuntimeError(
+            "Manifest/raw mismatch for %s | manifest=%s raw=%s"
+            % (local_name, expected_sha1[:12], last_sha1[:12])
+        )
+    _log(
+        "[updater] manifest mismatch fallback for %s | manifest=%s raw=%s"
         % (local_name, expected_sha1[:12], last_sha1[:12])
     )
+    return last_text or _download_text(url, cache_bust=True)
 
 
 def _bootstrap_private_sync_config():

@@ -1,6 +1,6 @@
 {
-  "updated_at": "2026-06-30 03:02:00",
-  "manifest_build": "2026-06-30-manifest-v58-lf-sha-fix",
+  "updated_at": "2026-06-30 03:08:00",
+  "manifest_build": "2026-06-30-manifest-v59-updater-fallback",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
@@ -18,10 +18,10 @@
     },
     "update_from_github.py": {
       "remote_name": "update_from_github.py",
-      "version_comment": "2026-06-30-updater-single-run-upload-v33",
-      "script_build": "2026-06-30-updater-v33",
-      "bytes": 26833,
-      "content_sha1": "c12d693b7b92a239c3882c7ec34f179a7b145ad4"
+      "version_comment": "2026-06-30-updater-manifest-fallback-v34",
+      "script_build": "2026-06-30-updater-v34",
+      "bytes": 27104,
+      "content_sha1": "9b4ca82b56f74071968f8b774649ab9f27dab777"
     },
     "upload_data_to_private_github.py": {
       "remote_name": "upload_data_to_private_github.py",
