@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-06-30-route-line-point-fallback-v63
+# version: 2026-06-30-argv-source-reject-v64
 import hashlib
 import json
 import os
@@ -1143,7 +1143,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-30-route-line-point-fallback-v63"
+SCRIPT_BUILD = "2026-06-30-argv-source-reject-v64"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1196,7 +1196,7 @@ SHORTCUT_INPUT_FALLBACK_PATH = os.path.expanduser("~/shortcut_offer_text.txt")
 SHORTCUT_INPUT_WAIT_SECONDS = 4.0
 SHORTCUT_INPUT_POLL_SECONDS = 0.10
 ENABLE_SHORTCUT_FILE_FALLBACK = False
-ENABLE_PHOTO_OCR_FALLBACK = False
+ENABLE_PHOTO_OCR_FALLBACK = True
 
 GOOD_HOURLY_MIN = 28.0
 BAD_HOURLY_MAX = 22.0
@@ -4120,6 +4120,8 @@ def _looks_like_direct_text_payload(text):
     value = ("%s" % (text or "")).strip()
     if len(value) < 20:
         return False
+    if _looks_like_python_source_payload(value):
+        return False
     lowered = value.lower()
     return (
         bool(re.search("[£$€]\\s*\\d", value))
@@ -4137,6 +4139,53 @@ def _looks_like_direct_text_payload(text):
     )
 
 
+def _looks_like_python_source_payload(text):
+    value = ("%s" % (text or "")).strip()
+    if len(value) < 40:
+        return False
+    lowered = value.lower()
+    source_markers = 0
+    for token in (
+        "import datetime",
+        "import hashlib",
+        "import json",
+        "import photos",
+        "from objc_util",
+        "try:",
+        "except exception",
+        "def _",
+        "re.compile(",
+        "script_build",
+        "if true:",
+        "ubertriplogger.py",
+        "# version:",
+        "clipboard = none",
+        "currency_amount_re",
+        "generic_duration_re",
+        "generic_distance_re",
+    ):
+        if token in lowered:
+            source_markers += 1
+    if source_markers >= 2:
+        return True
+    code_like_lines = 0
+    for line in value.splitlines()[:18]:
+        stripped = line.strip().lower()
+        if not stripped:
+            continue
+        if (
+            stripped.startswith("import ")
+            or stripped.startswith("from ")
+            or stripped.startswith("def ")
+            or stripped.startswith("except ")
+            or stripped.startswith("try:")
+            or stripped.startswith("if true:")
+            or stripped.startswith("# version:")
+        ):
+            code_like_lines += 1
+    return code_like_lines >= 3
+
+
 def _consume_shortcut_offer_text_argv():
     plain_text_items = []
     for arg in sys.argv[1:]:
@@ -4147,7 +4196,29 @@ def _consume_shortcut_offer_text_argv():
             continue
         plain_text_items.append(candidate)
     joined_text = "\n".join(plain_text_items).strip()
+    if _looks_like_python_source_payload(joined_text):
+        return {
+            "text": "",
+            "path": "",
+            "tag": "ARGV",
+            "bytes": len(joined_text.encode("utf-8", errors="ignore")),
+            "exists": True,
+            "looks_like_offer": False,
+            "arg_count": len(plain_text_items),
+            "invalid_reason": "argv_python_source",
+        }
     if not _looks_like_direct_text_payload(joined_text):
+        if joined_text:
+            return {
+                "text": "",
+                "path": "",
+                "tag": "ARGV",
+                "bytes": len(joined_text.encode("utf-8", errors="ignore")),
+                "exists": True,
+                "looks_like_offer": False,
+                "arg_count": len(plain_text_items),
+                "invalid_reason": "argv_rejected",
+            }
         return None
     return {
         "text": joined_text,
@@ -4727,6 +4798,8 @@ def _looks_like_shortcut_offer_text(text):
     text = ("%s" % (text or "")).strip()
     if len(text) < 12:
         return False
+    if _looks_like_python_source_payload(text):
+        return False
     return bool(re.search("[£$€]\\s*\\d", text))
 
 
@@ -4811,19 +4884,20 @@ def _read_shortcut_offer_input():
     argv_payload = _consume_shortcut_offer_text_argv()
     if argv_payload and argv_payload.get("text"):
         return argv_payload["text"], "argv", argv_payload
+    argv_invalid_payload = argv_payload if isinstance(argv_payload, dict) else None
     if not ENABLE_SHORTCUT_FILE_FALLBACK:
-        return "", "", {
+        return "", "", (argv_invalid_payload or {
             "tag": "ARGV",
             "path": "",
             "bytes": 0,
             "exists": False,
             "looks_like_offer": False,
             "invalid_reason": "argv_missing",
-        }
+        })
     file_payload = _consume_shortcut_offer_text_file()
     if file_payload and file_payload.get("text"):
         return file_payload["text"], "file", file_payload
-    return "", "", (file_payload or {"tag": "PHOTO", "path": "", "bytes": 0})
+    return "", "", (file_payload or argv_invalid_payload or {"tag": "PHOTO", "path": "", "bytes": 0})
 
 
 if __name__ == "__main__":
