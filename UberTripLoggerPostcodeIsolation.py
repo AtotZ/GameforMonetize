@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-07-01-route-line-consistency-v66
+# version: 2026-07-01-route-line-risk-percent-v67
 import hashlib
 import json
 import math
@@ -1144,7 +1144,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-07-01-route-line-consistency-v66"
+SCRIPT_BUILD = "2026-07-01-route-line-risk-percent-v67"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -3661,11 +3661,16 @@ def _route_line_audit_summary(route_line_shadow, traffic_verdict=None):
     final_source = ("%s" % (verdict.get("source") or "")).strip().lower()
     final_scope = ("%s" % (verdict.get("scope") or "")).strip().lower()
     display_score = _route_line_display_score(shadow)
+    risk_snapshot = _route_line_risk_snapshot(shadow)
     return {
         "enabled": bool(shadow.get("enabled")),
         "matched": bool(shadow.get("matched")),
         "trap_score": round(float(shadow.get("trap_score") or 0.0), 2),
         "display_score": int(display_score),
+        "risk_percent": int(risk_snapshot.get("percent") or 0),
+        "hotspot_strength": int(risk_snapshot.get("hotspot_strength") or 0),
+        "coverage_score": int(risk_snapshot.get("coverage_score") or 0),
+        "time_bonus": int(risk_snapshot.get("time_bonus") or 0),
         "status_hint": shadow.get("status_hint") or "none",
         "exact_hits": int(shadow.get("exact_hits") or 0),
         "near_hits": int(shadow.get("near_hits") or 0),
@@ -3683,6 +3688,45 @@ def _route_line_audit_summary(route_line_shadow, traffic_verdict=None):
         "matched_fine_bucket_count": len(matched_fine_buckets),
         "adjacent_fine_bucket_count": len(adjacent_fine_buckets),
         "final_route_override": final_source == "route_line_shadow" or final_scope == "route",
+    }
+
+
+def _route_line_risk_snapshot(route_line_shadow):
+    shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
+    exact_hits = int(shadow.get("exact_hits") or 0)
+    near_hits = int(shadow.get("near_hits") or 0)
+    endpoint_hits = int(shadow.get("endpoint_hits") or 0)
+    matched_cells = int(shadow.get("matched_cells") or 0)
+    unique_outcodes = int(shadow.get("unique_outcodes") or 0)
+    unique_sectors = int(shadow.get("unique_sectors") or 0)
+    time_bucket_hits = int(shadow.get("time_bucket_hits") or 0)
+    strong_time_hits = int(shadow.get("strong_time_hits") or 0)
+    same_weekday_days = int(shadow.get("same_weekday_days") or 0)
+    same_weekpart_days = int(shadow.get("same_weekpart_days") or 0)
+
+    hotspot_strength = min(45, exact_hits * 18 + near_hits * 8 + endpoint_hits * 4)
+    coverage_score = min(
+        30,
+        max(0, unique_outcodes - 1) * 10
+        + max(0, unique_sectors - 1) * 4
+        + min(8, max(0, matched_cells - 3) * 2),
+    )
+    time_bonus = 0
+    if strong_time_hits >= 1:
+        time_bonus = 20
+    elif time_bucket_hits >= 2:
+        time_bonus = 14
+    elif same_weekday_days >= 1:
+        time_bonus = 12
+    elif same_weekpart_days >= 1:
+        time_bonus = 8
+
+    percent = min(100, hotspot_strength + coverage_score + time_bonus)
+    return {
+        "percent": int(percent),
+        "hotspot_strength": int(hotspot_strength),
+        "coverage_score": int(coverage_score),
+        "time_bonus": int(time_bonus),
     }
 
 
@@ -3709,10 +3753,23 @@ def _compact_route_beacon_count(route_line_shadow):
 
 def _compact_traffic_notification_token(traffic_verdict, route_line_shadow):
     verdict = traffic_verdict if isinstance(traffic_verdict, dict) else {}
-    beacon_count = _compact_route_beacon_count(route_line_shadow)
-    return "%s B%s" % (
+    risk_snapshot = _route_line_risk_snapshot(route_line_shadow)
+    risk_percent = int(risk_snapshot.get("percent") or 0)
+    if risk_percent > 0:
+        return "%s %s%%" % (
+            verdict.get("emoji") or "\u26aa",
+            risk_percent,
+        )
+    status = ("%s" % (verdict.get("status") or "NEUTRAL")).strip().upper()
+    status_label = {
+        "RED": "RED",
+        "AMBER": "WATCH",
+        "GREEN": "OK",
+        "NEUTRAL": "OK",
+    }.get(status, status or "OK")
+    return "%s %s" % (
         verdict.get("emoji") or "\u26aa",
-        beacon_count,
+        status_label,
     )
 
 
@@ -4639,35 +4696,39 @@ def main():
         )
     else:
         traffic_compact = _compact_traffic_notification_token(traffic_verdict, route_line_shadow)
-        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s \u00b7 %s" % (
+        title_line = "\u2b50 %.2f | \U0001f4b0 \u00a3%.2f | %s" % (
             parsed["rating"] if parsed["rating"] else 0.0,
             parsed["price"],
             traffic_compact,
-            shortcut_source.get("tag") or "PHOTO",
         )
-        body_line1 = "Real Price \u00a3%.2f/min | \u00a3%.2f/miles" % (
-            metrics["per_min_adj"],
-            metrics["per_mile_including_pickup"],
-        )
-        body_line2 = "%s \u00a3%.2f/min | \u00a3%.2f/miles" % (
-            RSP1_ALIAS_LABEL,
-            metrics["per_min_card"],
-            metrics["per_mile_card"],
-        )
-        body_lines = [body_line1, body_line2]
+        body_lines = []
         beacon_count = _compact_route_beacon_count(route_line_shadow)
         if beacon_count > 0:
             body_lines.append(
-                "Route Beacons B%s | exact %s | near %s | endpoint %s"
+                "Beacons %s exact \u00b7 %s near \u00b7 %s endpoint"
                 % (
-                    beacon_count,
                     route_line_audit.get("exact_hits", 0),
                     route_line_audit.get("near_hits", 0),
                     route_line_shadow.get("endpoint_hits", 0),
                 )
             )
+        body_lines.append(
+            "Real \u00a3%.2f/min | \u00a3%.2f/mi"
+            % (
+                metrics["per_min_adj"],
+                metrics["per_mile_including_pickup"],
+            )
+        )
+        body_lines.append(
+            "%s \u00a3%.2f/min | \u00a3%.2f/mi"
+            % (
+                RSP1_ALIAS_LABEL,
+                metrics["per_min_card"],
+                metrics["per_mile_card"],
+            )
+        )
         route_direction_summary = ("%s" % (route_shadow.get("direction_summary") or "")).strip()
-        if route_direction_summary:
+        if route_direction_summary and beacon_count <= 0:
             body_lines.append("Route Shadow %s" % route_direction_summary)
         body_text = "\n".join(body_lines)
     _send_push_notification(title_line, body_text)
