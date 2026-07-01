@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-07-01-route-line-percent-fallback-v69
+# version: 2026-07-01-restore-beacon-count-v70
 import hashlib
 import json
 import math
@@ -1144,7 +1144,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-07-01-route-line-percent-fallback-v69"
+SCRIPT_BUILD = "2026-07-01-restore-beacon-count-v70"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -3811,22 +3811,10 @@ def _compact_route_beacon_count(route_line_shadow):
 
 def _compact_traffic_notification_token(traffic_verdict, route_line_shadow):
     verdict = traffic_verdict if isinstance(traffic_verdict, dict) else {}
-    risk_percent = int(_notification_risk_percent(traffic_verdict, route_line_shadow) or 0)
-    if risk_percent > 0:
-        return "%s %s%%" % (
-            verdict.get("emoji") or "\u26aa",
-            risk_percent,
-        )
-    status = ("%s" % (verdict.get("status") or "NEUTRAL")).strip().upper()
-    status_label = {
-        "RED": "RED",
-        "AMBER": "WATCH",
-        "GREEN": "OK",
-        "NEUTRAL": "OK",
-    }.get(status, status or "OK")
+    beacon_count = _compact_route_beacon_count(route_line_shadow)
     return "%s %s" % (
         verdict.get("emoji") or "\u26aa",
-        status_label,
+        "B%s" % beacon_count,
     )
 
 
