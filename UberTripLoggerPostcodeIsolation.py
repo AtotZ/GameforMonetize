@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-07-01-route-line-risk-percent-v67
+# version: 2026-07-01-route-line-body-reorder-v68
 import hashlib
 import json
 import math
@@ -1144,7 +1144,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-07-01-route-line-risk-percent-v67"
+SCRIPT_BUILD = "2026-07-01-route-line-body-reorder-v68"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -4702,16 +4702,6 @@ def main():
             traffic_compact,
         )
         body_lines = []
-        beacon_count = _compact_route_beacon_count(route_line_shadow)
-        if beacon_count > 0:
-            body_lines.append(
-                "Beacons %s exact \u00b7 %s near \u00b7 %s endpoint"
-                % (
-                    route_line_audit.get("exact_hits", 0),
-                    route_line_audit.get("near_hits", 0),
-                    route_line_shadow.get("endpoint_hits", 0),
-                )
-            )
         body_lines.append(
             "Real \u00a3%.2f/min | \u00a3%.2f/mi"
             % (
@@ -4727,6 +4717,16 @@ def main():
                 metrics["per_mile_card"],
             )
         )
+        beacon_count = _compact_route_beacon_count(route_line_shadow)
+        if beacon_count > 0:
+            body_lines.append(
+                "Beacons %s exact \u00b7 %s near \u00b7 %s endpoint"
+                % (
+                    route_line_audit.get("exact_hits", 0),
+                    route_line_audit.get("near_hits", 0),
+                    route_line_shadow.get("endpoint_hits", 0),
+                )
+            )
         route_direction_summary = ("%s" % (route_shadow.get("direction_summary") or "")).strip()
         if route_direction_summary and beacon_count <= 0:
             body_lines.append("Route Shadow %s" % route_direction_summary)
