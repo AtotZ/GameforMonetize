@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-07-01-route-line-body-reorder-v68
+# version: 2026-07-01-route-line-percent-fallback-v69
 import hashlib
 import json
 import math
@@ -1144,7 +1144,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-07-01-route-line-body-reorder-v68"
+SCRIPT_BUILD = "2026-07-01-route-line-percent-fallback-v69"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -3704,30 +3704,88 @@ def _route_line_risk_snapshot(route_line_shadow):
     same_weekday_days = int(shadow.get("same_weekday_days") or 0)
     same_weekpart_days = int(shadow.get("same_weekpart_days") or 0)
 
-    hotspot_strength = min(45, exact_hits * 18 + near_hits * 8 + endpoint_hits * 4)
+    hotspot_strength = min(42, exact_hits * 11 + near_hits * 5 + endpoint_hits * 2)
     coverage_score = min(
-        30,
-        max(0, unique_outcodes - 1) * 10
-        + max(0, unique_sectors - 1) * 4
-        + min(8, max(0, matched_cells - 3) * 2),
+        23,
+        max(0, unique_outcodes - 1) * 8
+        + max(0, unique_sectors - 1) * 3
+        + min(6, max(0, matched_cells - 3)),
     )
     time_bonus = 0
     if strong_time_hits >= 1:
-        time_bonus = 20
+        time_bonus = 15
     elif time_bucket_hits >= 2:
-        time_bonus = 14
+        time_bonus = 10
     elif same_weekday_days >= 1:
-        time_bonus = 12
-    elif same_weekpart_days >= 1:
         time_bonus = 8
+    elif same_weekpart_days >= 1:
+        time_bonus = 5
 
-    percent = min(100, hotspot_strength + coverage_score + time_bonus)
+    percent = min(85, hotspot_strength + coverage_score + time_bonus)
     return {
         "percent": int(percent),
         "hotspot_strength": int(hotspot_strength),
         "coverage_score": int(coverage_score),
         "time_bonus": int(time_bonus),
     }
+
+
+def _fallback_verdict_risk_percent(traffic_verdict):
+    verdict = traffic_verdict if isinstance(traffic_verdict, dict) else {}
+    status = ("%s" % (verdict.get("status") or "NEUTRAL")).strip().upper()
+    source = ("%s" % (verdict.get("source") or "")).strip().lower()
+    reason = ("%s" % (verdict.get("reason") or "")).strip().lower()
+
+    if source == "beacon_db":
+        exact_total = int(verdict.get("exact_total") or 0)
+        nearby_total = int(verdict.get("nearby_total") or 0)
+        time_bucket_score = float(verdict.get("time_bucket_score") or 0.0)
+        distinct_days = int(verdict.get("time_bucket_distinct_days") or 0)
+        same_weekday_days = int(verdict.get("time_bucket_same_weekday_days") or 0)
+        same_weekpart_days = int(verdict.get("time_bucket_same_weekpart_days") or 0)
+
+        percent = 18 + exact_total * 10 + nearby_total * 4 + min(10, int(round(time_bucket_score * 3.0)))
+        if distinct_days >= 2:
+            percent += 8
+        elif distinct_days >= 1:
+            percent += 4
+        if same_weekday_days >= 1:
+            percent += 5
+        elif same_weekpart_days >= 1:
+            percent += 3
+
+        cap = 78 if status == "AMBER" else 88 if status == "RED" else 55
+        floor = 42 if status == "AMBER" else 58 if status == "RED" else 20
+        return max(floor, min(cap, percent))
+
+    hardcoded_reason_map = {
+        "central_edge_busy": 62,
+        "north_or_east_pull": 58 if status == "AMBER" else 68,
+        "dropoff_risk_priority": 48,
+        "pickup_central_caution": 38,
+        "amber_edge_caution": 42,
+        "central_edge_caution": 40,
+        "central_edge_dropoff_caution": 45,
+        "pickup_origin_caution": 36,
+        "operator_blacklist_road": 74,
+    }
+    if reason in hardcoded_reason_map:
+        return int(hardcoded_reason_map[reason])
+
+    status_defaults = {
+        "RED": 65,
+        "AMBER": 45,
+        "GREEN": 18,
+        "NEUTRAL": 22,
+    }
+    return int(status_defaults.get(status, 22))
+
+
+def _notification_risk_percent(traffic_verdict, route_line_shadow):
+    route_percent = int(_route_line_risk_snapshot(route_line_shadow).get("percent") or 0)
+    if route_percent > 0:
+        return route_percent
+    return _fallback_verdict_risk_percent(traffic_verdict)
 
 
 def _route_line_display_score(route_line_shadow):
@@ -3753,8 +3811,7 @@ def _compact_route_beacon_count(route_line_shadow):
 
 def _compact_traffic_notification_token(traffic_verdict, route_line_shadow):
     verdict = traffic_verdict if isinstance(traffic_verdict, dict) else {}
-    risk_snapshot = _route_line_risk_snapshot(route_line_shadow)
-    risk_percent = int(risk_snapshot.get("percent") or 0)
+    risk_percent = int(_notification_risk_percent(traffic_verdict, route_line_shadow) or 0)
     if risk_percent > 0:
         return "%s %s%%" % (
             verdict.get("emoji") or "\u26aa",
