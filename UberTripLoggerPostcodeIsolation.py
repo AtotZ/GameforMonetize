@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-07-01-route-line-runtime-fallback-fix-v65
+# version: 2026-07-01-route-line-consistency-v66
 import hashlib
 import json
 import math
@@ -1144,7 +1144,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-07-01-route-line-runtime-fallback-fix-v65"
+SCRIPT_BUILD = "2026-07-01-route-line-consistency-v66"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -3660,11 +3660,12 @@ def _route_line_audit_summary(route_line_shadow, traffic_verdict=None):
     adjacent_fine_buckets = shadow.get("adjacent_fine_buckets") or []
     final_source = ("%s" % (verdict.get("source") or "")).strip().lower()
     final_scope = ("%s" % (verdict.get("scope") or "")).strip().lower()
+    display_score = _route_line_display_score(shadow)
     return {
         "enabled": bool(shadow.get("enabled")),
         "matched": bool(shadow.get("matched")),
         "trap_score": round(float(shadow.get("trap_score") or 0.0), 2),
-        "display_score": int(max(0, round(float(shadow.get("trap_score") or 0.0)))),
+        "display_score": int(display_score),
         "status_hint": shadow.get("status_hint") or "none",
         "exact_hits": int(shadow.get("exact_hits") or 0),
         "near_hits": int(shadow.get("near_hits") or 0),
@@ -3685,9 +3686,16 @@ def _route_line_audit_summary(route_line_shadow, traffic_verdict=None):
     }
 
 
+def _route_line_display_score(route_line_shadow):
+    shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
+    weighted_score = int(max(0, round(float(shadow.get("trap_score") or 0.0))))
+    raw_hits = _compact_route_beacon_count(shadow)
+    return max(weighted_score, raw_hits)
+
+
 def _compact_route_score_label(route_line_shadow):
     shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
-    display_score = int(max(0, round(float(shadow.get("trap_score") or 0.0))))
+    display_score = _route_line_display_score(shadow)
     return "R%s" % display_score
 
 
@@ -3716,7 +3724,11 @@ def _merge_route_line_verdict(base_verdict, route_verdict):
     rank = {"GREEN": 1, "NEUTRAL": 2, "AMBER": 3, "RED": 4}
     base_rank = rank.get(("%s" % (base_verdict.get("status") or "")).upper(), 0)
     route_rank = rank.get(("%s" % (route_verdict.get("status") or "")).upper(), 0)
-    return route_verdict if route_rank > base_rank else base_verdict
+    if route_rank > base_rank:
+        return route_verdict
+    if route_rank == base_rank and route_rank >= rank["AMBER"]:
+        return route_verdict
+    return base_verdict
 
 
 def _compact_traffic_title_label(parsed, traffic_verdict):
