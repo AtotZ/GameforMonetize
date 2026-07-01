@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-07-01-restore-beacon-count-v70
+# version: 2026-07-01-add-time-token-v71
 import hashlib
 import json
 import math
@@ -1144,7 +1144,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-07-01-restore-beacon-count-v70"
+SCRIPT_BUILD = "2026-07-01-add-time-token-v71"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -3809,12 +3809,22 @@ def _compact_route_beacon_count(route_line_shadow):
     return max(0, exact_hits + near_hits + endpoint_hits)
 
 
+def _compact_route_time_count(route_line_shadow):
+    shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
+    strong_time_hits = int(shadow.get("strong_time_hits") or 0)
+    if strong_time_hits > 0:
+        return strong_time_hits
+    time_bucket_hits = int(shadow.get("time_bucket_hits") or 0)
+    return max(0, time_bucket_hits)
+
+
 def _compact_traffic_notification_token(traffic_verdict, route_line_shadow):
     verdict = traffic_verdict if isinstance(traffic_verdict, dict) else {}
     beacon_count = _compact_route_beacon_count(route_line_shadow)
+    time_count = _compact_route_time_count(route_line_shadow)
     return "%s %s" % (
         verdict.get("emoji") or "\u26aa",
-        "B%s" % beacon_count,
+        "B%s T%s" % (beacon_count, time_count),
     )
 
 

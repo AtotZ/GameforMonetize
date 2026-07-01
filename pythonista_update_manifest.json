@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-07-01 13:20:00",
-  "manifest_build": "2026-07-01-manifest-v73-restore-beacon-count",
+  "updated_at": "2026-07-01 21:47:00",
+  "manifest_build": "2026-07-01-manifest-v74-add-time-token",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-07-01-restore-beacon-count-v70",
-      "script_build": "2026-07-01-restore-beacon-count-v70",
-      "bytes": 207968,
-      "content_sha1": "e32323022bbb798ba621d219b3e01c9f7838cefc"
+      "version_comment": "2026-07-01-add-time-token-v71",
+      "script_build": "2026-07-01-add-time-token-v71",
+      "bytes": 208391,
+      "content_sha1": "6aac4787735403a7bcaa40c079783ecc729c145d"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
