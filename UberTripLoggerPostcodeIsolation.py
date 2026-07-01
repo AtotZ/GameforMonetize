@@ -1,7 +1,8 @@
 ﻿import datetime
-# version: 2026-06-30-argv-source-reject-v64
+# version: 2026-07-01-route-line-runtime-fallback-fix-v65
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -1143,7 +1144,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-06-30-argv-source-reject-v64"
+SCRIPT_BUILD = "2026-07-01-route-line-runtime-fallback-fix-v65"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -1364,6 +1365,7 @@ def _write_active_offer(
 ):
     history_path = _daily_jsonl_path(OFFERS_HISTORY_DIR, "active_offer_history", now_str[:10])
     payload = {
+        "script_build": SCRIPT_BUILD,
         "timestamp": now_str,
         "pickup_address": parsed.get("pickup_address") or "",
         "dropoff_address": parsed.get("dropoff_address") or "",
@@ -1933,7 +1935,7 @@ def _build_runtime_line_grid_db_from_points(points):
         "schema_version": 1,
         "runtime_fallback": True,
         "source": "route_points_runtime",
-        "updated_at": _timestamp(),
+        "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "origin_lat": LONDON_GRID_ORIGIN_LAT,
         "origin_lon": LONDON_GRID_ORIGIN_LON,
         "cell_size_m": LINE_GRID_CELL_SIZE_METERS,
@@ -3249,6 +3251,7 @@ def _safe_route_line_shadow_snapshot(parsed, now_dt=None):
             "source": "beacon_line_shadow",
             "model": "line_grid_v2",
             "time_bucket": _traffic_time_bucket(now_dt or datetime.datetime.now()),
+            "error": "%s" % exc,
             "exact_hits": 0,
             "near_hits": 0,
             "time_bucket_hits": 0,
