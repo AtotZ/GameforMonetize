@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-07-02-time-range-bands-v73
+# version: 2026-07-02-postcode-ocr-hardening-v74
 import hashlib
 import json
 import math
@@ -81,6 +81,42 @@ if True:
     VALID_OUTWARD_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?$")
     VALID_INWARD_RE = re.compile(r"^\d[A-Z]{2}$")
     VALID_SINGLE_LETTER_POSTAL_AREAS = set(["B", "E", "G", "L", "M", "N", "S", "W"])
+    VALID_POSTCODE_AREAS = set(
+        [
+            "AB", "AL", "B", "BA", "BB", "BD", "BH", "BL", "BN", "BR", "BS", "BT",
+            "CA", "CB", "CF", "CH", "CM", "CO", "CR", "CT", "CV", "CW",
+            "DA", "DD", "DE", "DG", "DH", "DL", "DN", "DT", "DY",
+            "E", "EC", "EH", "EN", "EX",
+            "FK", "FY",
+            "G", "GL", "GU", "GY",
+            "HA", "HD", "HG", "HP", "HR", "HS", "HU", "HX",
+            "IG", "IM", "IP", "IV",
+            "JE",
+            "KA", "KT", "KW", "KY",
+            "L", "LA", "LD", "LE", "LL", "LN", "LS", "LU",
+            "M", "ME", "MK", "ML",
+            "N", "NE", "NG", "NN", "NP", "NR", "NW",
+            "OL", "OX",
+            "PA", "PE", "PH", "PL", "PO", "PR",
+            "RG", "RH", "RM",
+            "S", "SA", "SE", "SG", "SK", "SL", "SM", "SN", "SO", "SP", "SR", "SS", "ST", "SW", "SY",
+            "TA", "TD", "TF", "TN", "TQ", "TR", "TS", "TW",
+            "UB",
+            "W", "WA", "WC", "WD", "WF", "WN", "WR", "WS", "WV",
+            "YO",
+            "ZE",
+        ]
+    )
+    SPECIAL_AREA_MAX_DISTRICT = {
+        "EC": 4,
+        "WC": 2,
+        "W": 14,
+        "E": 20,
+        "N": 22,
+        "NW": 11,
+        "SE": 28,
+        "SW": 20,
+    }
     POSTCODE_OUTWARD_PATTERNS = ("A9", "A9A", "A99", "AA9", "AA9A", "AA99")
     POSTCODE_OUTWARD_LOOSE_RE = re.compile(r"\b([A-Z]{1,2}[0-9IOZLSQB][A-Z0-9IOZLSQB]?)\b", re.IGNORECASE)
     POSTCODE_FULL_LOOSE_RE = re.compile(
@@ -233,13 +269,48 @@ if True:
         candidate = "".join(chars)
         return candidate if _is_valid_outward_candidate(candidate) else ""
 
+    def _outward_area_and_district(candidate):
+        value = ("%s" % (candidate or "")).upper().strip()
+        match = re.match(r"^([A-Z]{1,2})(\d{1,2})([A-Z\d]?)$", value)
+        if not match:
+            return "", None, ""
+        try:
+            district = int(match.group(2))
+        except Exception:
+            district = None
+        return match.group(1), district, match.group(3)
+
+    def _is_plausible_outward_candidate(candidate):
+        area, district, _suffix = _outward_area_and_district(candidate)
+        if not area or district is None:
+            return False
+        if area not in VALID_POSTCODE_AREAS:
+            return False
+        max_district = SPECIAL_AREA_MAX_DISTRICT.get(area)
+        if max_district is not None and district > max_district:
+            return False
+        return True
+
+    def _repair_implausible_outward_candidate(raw):
+        value = re.sub(r"[^A-Z0-9]", "", _transliterate_postcode_confusables(raw).upper())
+        match = re.match(r"^([A-Z]{1,2})(\d)(\d)$", value)
+        if not match:
+            return ""
+        area = match.group(1)
+        if area not in VALID_POSTCODE_AREAS:
+            return ""
+        candidate = "%s%s%s" % (area, match.group(2), _normalize_postcode_letter_char(match.group(3)))
+        if candidate and VALID_OUTWARD_RE.match(candidate) and _is_plausible_outward_candidate(candidate):
+            return candidate
+        return ""
+
     def _is_valid_outward_candidate(candidate):
         value = ("%s" % (candidate or "")).upper().strip()
         if not value or not VALID_OUTWARD_RE.match(value):
             return False
         if len(value) >= 2 and value[0].isalpha() and value[1].isdigit():
-            return value[0] in VALID_SINGLE_LETTER_POSTAL_AREAS
-        return True
+            return value[0] in VALID_SINGLE_LETTER_POSTAL_AREAS and _is_plausible_outward_candidate(value)
+        return _is_plausible_outward_candidate(value)
 
     def _normalize_postcode_outward_token(token):
         raw = re.sub(r"[^A-Z0-9]", "", _transliterate_postcode_confusables(token).upper())
@@ -247,6 +318,13 @@ if True:
             return ""
         if raw == "WCH":
             return "WC2H"
+        if raw == "WIB":
+            return "W1B"
+        if raw == "NWI":
+            return "NW1"
+        repaired_implausible = _repair_implausible_outward_candidate(raw)
+        if repaired_implausible:
+            return repaired_implausible
         if len(raw) == 3 and raw[0] == "U" and raw[1] in ("8", "B") and raw[2].isdigit():
             return "UB%s" % raw[2]
         if len(raw) == 4 and raw[-1:] in ("O", "I", "L", "Q", "Z", "S", "B", "G"):
@@ -383,6 +461,9 @@ if True:
             return text
         transliterated = _transliterate_postcode_confusables(text)
         transliterated = transliterated.replace("\u0417", "3")
+        transliterated = re.sub(r"\bWIB\b", "W1B", transliterated, flags=re.IGNORECASE)
+        transliterated = re.sub(r"\bNWI\b", "NW1", transliterated, flags=re.IGNORECASE)
+        transliterated = re.sub(r"\bSWIW\b", "SW1W", transliterated, flags=re.IGNORECASE)
         transliterated = re.sub(
             r"\bWCH\s*([0-9IOZLSQBG][A-Z]{2})\b",
             lambda match: "WC2H %s" % ((_normalize_postcode_inward_token(match.group(1)) or match.group(1))),
@@ -1144,7 +1225,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-07-02-time-range-bands-v73"
+SCRIPT_BUILD = "2026-07-02-postcode-ocr-hardening-v74"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()

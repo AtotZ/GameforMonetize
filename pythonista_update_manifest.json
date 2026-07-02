@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-07-02 11:05:00",
-  "manifest_build": "2026-07-02-manifest-v76-time-range-bands",
+  "updated_at": "2026-07-02 12:20:00",
+  "manifest_build": "2026-07-02-manifest-v77-postcode-ocr-hardening",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-07-02-time-range-bands-v73",
-      "script_build": "2026-07-02-time-range-bands-v73",
-      "bytes": 213328,
-      "content_sha1": "72c776effdb8c831312e62e417705de2b28e135f"
+      "version_comment": "2026-07-02-postcode-ocr-hardening-v74",
+      "script_build": "2026-07-02-postcode-ocr-hardening-v74",
+      "bytes": 216595,
+      "content_sha1": "b14ac457ba3f52eae7f94c7c6875baac97a0fc8f"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
