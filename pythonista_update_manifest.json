@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-07-01 21:47:00",
-  "manifest_build": "2026-07-01-manifest-v74-add-time-token",
+  "updated_at": "2026-07-01 22:15:00",
+  "manifest_build": "2026-07-01-manifest-v75-tighten-time-token",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-07-01-add-time-token-v71",
-      "script_build": "2026-07-01-add-time-token-v71",
-      "bytes": 208391,
-      "content_sha1": "6aac4787735403a7bcaa40c079783ecc729c145d"
+      "version_comment": "2026-07-01-tighten-time-token-v72",
+      "script_build": "2026-07-01-tighten-time-token-v72",
+      "bytes": 211781,
+      "content_sha1": "64d58cc7f12d08e4aa6201d1a6a254af8f33bda2"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",

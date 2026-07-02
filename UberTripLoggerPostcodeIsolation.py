@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-07-01-add-time-token-v71
+# version: 2026-07-01-tighten-time-token-v72
 import hashlib
 import json
 import math
@@ -1144,7 +1144,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-07-01-add-time-token-v71"
+SCRIPT_BUILD = "2026-07-01-tighten-time-token-v72"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -3620,6 +3620,8 @@ def _route_line_override_verdict(parsed, route_line_shadow, now_dt=None):
     exact_hits = int(shadow.get("exact_hits") or 0)
     near_hits = int(shadow.get("near_hits") or 0)
     strong_time_hits = int(shadow.get("strong_time_hits") or 0)
+    coarse_time_hits = int(shadow.get("time_bucket_hits") or 0)
+    adjacent_fine_hits = len(shadow.get("adjacent_fine_buckets") or [])
     top_outcodes = shadow.get("top_outcodes") or []
     top_sectors = shadow.get("top_sectors") or []
     label = ""
@@ -3630,11 +3632,13 @@ def _route_line_override_verdict(parsed, route_line_shadow, now_dt=None):
     else:
         label = "Route trap"
 
-    reason = "route_line score=%.2f exact=%s near=%s time=%s" % (
+    reason = "route_line score=%.2f exact=%s near=%s T=%s coarse=%s adj=%s" % (
         trap_score,
         exact_hits,
         near_hits,
         strong_time_hits,
+        coarse_time_hits,
+        adjacent_fine_hits,
     )
     time_bucket = _traffic_time_bucket(now_dt)
 
@@ -3812,10 +3816,7 @@ def _compact_route_beacon_count(route_line_shadow):
 def _compact_route_time_count(route_line_shadow):
     shadow = route_line_shadow if isinstance(route_line_shadow, dict) else {}
     strong_time_hits = int(shadow.get("strong_time_hits") or 0)
-    if strong_time_hits > 0:
-        return strong_time_hits
-    time_bucket_hits = int(shadow.get("time_bucket_hits") or 0)
-    return max(0, time_bucket_hits)
+    return max(0, strong_time_hits)
 
 
 def _compact_traffic_notification_token(traffic_verdict, route_line_shadow):
