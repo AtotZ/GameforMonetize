@@ -1,5 +1,5 @@
 ﻿import datetime
-# version: 2026-07-01-tighten-time-token-v72
+# version: 2026-07-02-time-range-bands-v73
 import hashlib
 import json
 import math
@@ -1144,7 +1144,7 @@ if True:
             },
         }
 
-SCRIPT_BUILD = "2026-07-01-tighten-time-token-v72"
+SCRIPT_BUILD = "2026-07-02-time-range-bands-v73"
 SCRIPT_BUILD_TAG = SCRIPT_BUILD.rsplit("-", 1)[-1]
 
 t_global_start = time.perf_counter()
@@ -2687,6 +2687,8 @@ def _evaluate_route_line_candidate(candidate, pickup_endpoint, dropoff_endpoint,
         "endpoint_hits": 0,
         "time_bucket_hits": 0,
         "strong_time_hits": 0,
+        "adjacent_time_hits": 0,
+        "coarse_time_hits": 0,
         "unique_outcodes": 0,
         "unique_sectors": 0,
         "top_outcodes": [],
@@ -2760,11 +2762,21 @@ def _evaluate_route_line_candidate(candidate, pickup_endpoint, dropoff_endpoint,
         else:
             result["endpoint_hits"] = int(result.get("endpoint_hits") or 0) + 1
         matched_buckets = weighted.get("matched_buckets") or []
+        primary_bucket_hit = bool(offer_primary_fine_bucket and offer_primary_fine_bucket in matched_buckets)
+        adjacent_bucket_hit = False
+        for candidate_bucket in matched_buckets:
+            if candidate_bucket == offer_primary_fine_bucket:
+                continue
+            if candidate_bucket in offer_neighbor_fine_buckets:
+                adjacent_bucket_hit = True
+                break
         if matched_buckets:
             result["time_bucket_hits"] = int(result.get("time_bucket_hits") or 0) + 1
-        if offer_primary_fine_bucket and offer_primary_fine_bucket in matched_buckets:
+        if primary_bucket_hit:
             matched_fine_buckets.add(offer_primary_fine_bucket)
             result["strong_time_hits"] = int(result.get("strong_time_hits") or 0) + 1
+        elif adjacent_bucket_hit:
+            result["adjacent_time_hits"] = int(result.get("adjacent_time_hits") or 0) + 1
         for candidate_bucket in matched_buckets:
             if candidate_bucket == offer_primary_fine_bucket:
                 continue
@@ -2935,6 +2947,8 @@ def _route_line_point_fallback_snapshot(path_points, pickup_endpoint, dropoff_en
         "endpoint_hits": 0,
         "time_bucket_hits": 0,
         "strong_time_hits": 0,
+        "adjacent_time_hits": 0,
+        "coarse_time_hits": 0,
         "unique_outcodes": 0,
         "unique_sectors": 0,
         "top_outcodes": [],
@@ -3023,12 +3037,15 @@ def _route_line_point_fallback_snapshot(path_points, pickup_endpoint, dropoff_en
         else:
             result["endpoint_hits"] = int(result.get("endpoint_hits") or 0) + 1
 
-        if hit_weight["bucket_match"] or hit_weight["adjacent_match"] or (
-            beacon_dt and _traffic_time_bucket(beacon_dt) == _traffic_time_bucket(now_dt)
-        ):
+        coarse_bucket_hit = bool(beacon_dt and _traffic_time_bucket(beacon_dt) == _traffic_time_bucket(now_dt))
+        if hit_weight["bucket_match"] or hit_weight["adjacent_match"] or coarse_bucket_hit:
             result["time_bucket_hits"] = int(result.get("time_bucket_hits") or 0) + 1
         if hit_weight["bucket_match"]:
             result["strong_time_hits"] = int(result.get("strong_time_hits") or 0) + 1
+        elif hit_weight["adjacent_match"]:
+            result["adjacent_time_hits"] = int(result.get("adjacent_time_hits") or 0) + 1
+        elif coarse_bucket_hit:
+            result["coarse_time_hits"] = int(result.get("coarse_time_hits") or 0) + 1
 
         point_fine_bucket = _fine_bucket_key(_fine_bucket_start(beacon_dt)) if beacon_dt else ""
         if point_fine_bucket:
@@ -3222,6 +3239,8 @@ def _route_line_shadow_snapshot(parsed, now_dt=None):
             "endpoint_hits": int(selected_result.get("endpoint_hits") or 0),
             "time_bucket_hits": int(selected_result.get("time_bucket_hits") or 0),
             "strong_time_hits": int(selected_result.get("strong_time_hits") or 0),
+            "adjacent_time_hits": int(selected_result.get("adjacent_time_hits") or 0),
+            "coarse_time_hits": int(selected_result.get("coarse_time_hits") or 0),
             "unique_outcodes": int(selected_result.get("unique_outcodes") or 0),
             "unique_sectors": int(selected_result.get("unique_sectors") or 0),
             "top_outcodes": selected_result.get("top_outcodes") or [],
@@ -3256,6 +3275,8 @@ def _safe_route_line_shadow_snapshot(parsed, now_dt=None):
             "near_hits": 0,
             "time_bucket_hits": 0,
             "strong_time_hits": 0,
+            "adjacent_time_hits": 0,
+            "coarse_time_hits": 0,
             "unique_outcodes": 0,
             "unique_sectors": 0,
             "top_outcodes": [],
@@ -3620,7 +3641,8 @@ def _route_line_override_verdict(parsed, route_line_shadow, now_dt=None):
     exact_hits = int(shadow.get("exact_hits") or 0)
     near_hits = int(shadow.get("near_hits") or 0)
     strong_time_hits = int(shadow.get("strong_time_hits") or 0)
-    coarse_time_hits = int(shadow.get("time_bucket_hits") or 0)
+    adjacent_time_hits = int(shadow.get("adjacent_time_hits") or 0)
+    coarse_time_hits = int(shadow.get("coarse_time_hits") or 0)
     adjacent_fine_hits = len(shadow.get("adjacent_fine_buckets") or [])
     top_outcodes = shadow.get("top_outcodes") or []
     top_sectors = shadow.get("top_sectors") or []
@@ -3632,11 +3654,12 @@ def _route_line_override_verdict(parsed, route_line_shadow, now_dt=None):
     else:
         label = "Route trap"
 
-    reason = "route_line score=%.2f exact=%s near=%s T=%s coarse=%s adj=%s" % (
+    reason = "route_line score=%.2f exact=%s near=%s T=%s A=%s C=%s adj=%s" % (
         trap_score,
         exact_hits,
         near_hits,
         strong_time_hits,
+        adjacent_time_hits,
         coarse_time_hits,
         adjacent_fine_hits,
     )
@@ -3680,6 +3703,8 @@ def _route_line_audit_summary(route_line_shadow, traffic_verdict=None):
         "near_hits": int(shadow.get("near_hits") or 0),
         "time_bucket_hits": int(shadow.get("time_bucket_hits") or 0),
         "strong_time_hits": int(shadow.get("strong_time_hits") or 0),
+        "adjacent_time_hits": int(shadow.get("adjacent_time_hits") or 0),
+        "coarse_time_hits": int(shadow.get("coarse_time_hits") or 0),
         "unique_outcodes": int(shadow.get("unique_outcodes") or 0),
         "unique_sectors": int(shadow.get("unique_sectors") or 0),
         "top_outcodes": list(shadow.get("top_outcodes") or []),
@@ -3705,6 +3730,8 @@ def _route_line_risk_snapshot(route_line_shadow):
     unique_sectors = int(shadow.get("unique_sectors") or 0)
     time_bucket_hits = int(shadow.get("time_bucket_hits") or 0)
     strong_time_hits = int(shadow.get("strong_time_hits") or 0)
+    adjacent_time_hits = int(shadow.get("adjacent_time_hits") or 0)
+    coarse_time_hits = int(shadow.get("coarse_time_hits") or 0)
     same_weekday_days = int(shadow.get("same_weekday_days") or 0)
     same_weekpart_days = int(shadow.get("same_weekpart_days") or 0)
 
@@ -3718,8 +3745,10 @@ def _route_line_risk_snapshot(route_line_shadow):
     time_bonus = 0
     if strong_time_hits >= 1:
         time_bonus = 15
-    elif time_bucket_hits >= 2:
+    elif adjacent_time_hits >= 1:
         time_bonus = 10
+    elif coarse_time_hits >= 2:
+        time_bonus = 6
     elif same_weekday_days >= 1:
         time_bonus = 8
     elif same_weekpart_days >= 1:

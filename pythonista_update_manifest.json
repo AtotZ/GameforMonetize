@@ -1,13 +1,13 @@
 {
-  "updated_at": "2026-07-01 22:15:00",
-  "manifest_build": "2026-07-01-manifest-v75-tighten-time-token",
+  "updated_at": "2026-07-02 11:05:00",
+  "manifest_build": "2026-07-02-manifest-v76-time-range-bands",
   "files": {
     "UberTripLogger.py": {
       "remote_name": "UberTripLoggerPostcodeIsolation.py",
-      "version_comment": "2026-07-01-tighten-time-token-v72",
-      "script_build": "2026-07-01-tighten-time-token-v72",
-      "bytes": 211781,
-      "content_sha1": "64d58cc7f12d08e4aa6201d1a6a254af8f33bda2"
+      "version_comment": "2026-07-02-time-range-bands-v73",
+      "script_build": "2026-07-02-time-range-bands-v73",
+      "bytes": 213328,
+      "content_sha1": "72c776effdb8c831312e62e417705de2b28e135f"
     },
     "traffic_beacon.py": {
       "remote_name": "traffic_beacon.py",
